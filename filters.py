@@ -3,30 +3,144 @@ from osgeo import gdal
 from collections import defaultdict
 import glob
 import os
-import datetime
 import matplotlib.pyplot as plt
+import datetime as dt
 import numpy as np
 
+
 def read_c2_matrices(dir, pattern = '*.tif'):
+
+    """
+    Read images available in <Sensor>_DDMonYY_Mat format exported from C2 matrix
+    :param dir: Image directory
+    :param pattern: Image file pattern. Default format is tif
+    :return: Dictionary of images keyed by dates.
+    """
+    print('Reading files...')
     image_dict = defaultdict(lambda: [])
     dir += os.sep + pattern
     for files in glob.glob(dir):
         date = files[files.find('_') + 1: files.rfind('_')]
-        date = datetime.datetime.strptime(date, '%d%b%y')
+        date = dt.datetime.strptime(date, '%d%b%y')
         image_dict[date].append(gdal.Open(files))
     return image_dict
 
-image_dict = read_c2_matrices(r'C:\Users\s6038174\Downloads\ITC\SAYANTAN\shashi kumar\pmat\TIFs')
-bands = []
-for v in image_dict.values():
-    for images in v:
-        print(images.RasterCount)
-        bands.append(images.GetRasterBand(1).ReadAsArray())
 
-cpd = np.rad2deg(bands[0])
-cpd = gaussian_filter(cpd, sigma=3)
-plt.imshow(cpd)
+def calc_cpd(real_band, imag_band):
+
+    """
+    Calculate copolar phase difference (CPD)
+    :param real_band: Real component of C12 in C2 matrix
+    :param imag_band: Imaginary component of C12 in C2 matrix
+    :return: CPD numpy array
+    """
+    return np.rad2deg(np.arctan2(imag_band, real_band))
+
+
+def calc_snow_depth(dir, freq = 9650E+6):
+
+    """
+    Calculate snow depth
+    :param dir: Image directory
+    :param freq: Radar frequency. Default 9560 MHz is set for X-band datasets
+    :return: CPD and Snow-depth dictionaries keyed by dates.
+    """
+    print('Calculating snow depth...')
+    image_dict = read_c2_matrices(dir)
+    cpd_dict = {}
+    snow_depth = {}
+    for k, v in image_dict.items():
+        cpd = []
+        print('Calculating CPD for ' + str(k).split()[0] + '...')
+        for images in v:
+            cpd.append(calc_cpd(images.GetRasterBand(2).ReadAsArray(),
+                                          images.GetRasterBand(3).ReadAsArray()))
+        cpd_dict[k] = (cpd[0] + cpd[1])/2
+        print('Applying Gaussian Filter to CPD...')
+        cpd_dict[k] = gaussian_filter(cpd_dict[k], sigma=3)
+        snow_depth[k] = np.abs(-(3E+8)/freq * cpd_dict[k]/(4*np.pi*0.02))
+    print('Calculation complete!')
+    return cpd_dict, snow_depth
+
+
+def mean_var(value_dict):
+
+    """
+    Calculate mean and variance of the images
+    :param value_dict: Dictionary of CPD or snow-depth values
+    :return: Mean, Mean + Sigma, Mean - Sigma dictionaries
+    """
+    avg = {}
+    var1 = {}
+    var2 = {}
+    print('Calculating average...')
+    for k in sorted(value_dict.keys()):
+        avg[k] = np.mean(value_dict[k])
+        var1[k] = avg[k] + np.sqrt(np.var(value_dict[k]))
+        var2[k] = avg[k] - np.sqrt(np.var(value_dict[k]))
+    return avg, var1, var2
+
+
+def plot_graphs(cpd_dict, sd_dict):
+
+    """
+    Plot CPD and Snow-depth graphs
+    :param cpd_dict: CPD dictionary
+    :param sd_dict: Snow-depth dictionary
+    :return: None
+    """
+    avg_cpd, var_cpd1, var_cpd2 = mean_var(cpd_dict)
+    avg_sd, var_sd1, var_sd2 = mean_var(sd_dict)
+    dates = list(avg_cpd.keys())
+    dates = [str(d).split()[0] for d in dates]
+    plt.plot(dates, avg_cpd.values(), 'go-', label = 'mean+sigma')
+    plt.plot(dates, var_cpd1.values(), 'ro-', label = 'mean')
+    plt.plot(dates, var_cpd2.values(), 'bo-', label = 'mean-sigma')
+    plt.xlabel('Dates')
+    plt.ylabel('CPD (Degrees)')
+    plt.legend()
+    plt.title('Temporal variations of CPD')
+    plt.show()
+    plt.plot(dates, avg_sd.values(), 'go-', label = 'mean+sigma')
+    plt.plot(dates, var_sd1.values(), 'ro-', label = 'mean')
+    plt.plot(dates, var_sd2.values(), 'bo-', label = 'mean-sigma')
+    plt.xlabel('Dates')
+    plt.ylabel('Snow-depth (m)')
+    plt.legend()
+    plt.title('Temporal variations of Snow-depth')
+    plt.show()
+
+
+def write_data(data_dict, filename):
+
+    """
+    Write outputs for CPD and Snow-depth
+    :param data_dict: Input data dictionary
+    :param filename: Output file name
+    :return: None
+    """
+    print('\nWriting outputs...')
+    if not os.path.exists('Maps'):
+        os.mkdir('Maps')
+    driver = gdal.GetDriverByName("GTiff")
+    for k in data_dict.keys():
+        width, height = np.shape(data_dict[k])
+        outfile = 'Maps' + os.sep + str(k).split()[0] + '_' + filename + '.tif'
+        outdata = driver.Create(outfile, height, width, 1, gdal.GDT_Float32)
+        outdata.GetRasterBand(1).WriteArray(data_dict[k])
+        outdata.FlushCache()
+    print('All Maps created!')
+
+
+cpd_dict, sd_dict = calc_snow_depth(r'TIFs')
+plt.title('CPD for 08Jan16')
+plt.imshow(cpd_dict[dt.datetime.strptime('08Jan16','%d%b%y')])
 plt.colorbar()
 plt.show()
-cpd = cpd[~np.isnan(cpd)]
-print(np.mean(cpd))
+plt.imshow(sd_dict[dt.datetime.strptime('08Jan16','%d%b%y')])
+plt.title('Snow-depth for 08Jan16')
+plt.colorbar()
+plt.show()
+plot_graphs(cpd_dict, sd_dict)
+write_data(cpd_dict, 'CPD')
+write_data(sd_dict, 'Snow-depth')
