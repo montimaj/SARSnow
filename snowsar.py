@@ -58,7 +58,7 @@ def get_rmse(x, y):
     return np.sqrt(mse)
 
 
-def calc_snow_depth(dir, freq = 9650E+6):
+def calc_snow_depth(image_dict, freq = 9650E+6):
 
     """
     Calculate snow depth
@@ -67,7 +67,6 @@ def calc_snow_depth(dir, freq = 9650E+6):
     :return: CPD and Snow-depth dictionaries keyed by dates.
     """
     print('Calculating snow depth...')
-    image_dict = read_c2_matrices(dir)
     cpd_dict = {}
     snow_depth = {}
     rmse_cpd_dict = {}
@@ -85,11 +84,12 @@ def calc_snow_depth(dir, freq = 9650E+6):
     return cpd_dict, snow_depth, rmse_cpd_dict
 
 
-def mean_var(value_dict):
+def mean_var(value_dict, snow_depth = False):
 
     """
     Calculate mean and variance of the images
     :param value_dict: Dictionary of CPD or snow-depth values
+    :param snow_depth: Calculation for snow depth
     :return: Mean, Mean + Sigma, Mean - Sigma dictionaries
     """
     avg = {}
@@ -97,9 +97,12 @@ def mean_var(value_dict):
     var2 = {}
     print('Calculating average...')
     for k in sorted(value_dict.keys()):
+        value_dict[k] = value_dict[k][~np.isnan(value_dict[k])]
         avg[k] = np.mean(value_dict[k])
         var1[k] = avg[k] + np.sqrt(np.var(value_dict[k]))
         var2[k] = avg[k] - np.sqrt(np.var(value_dict[k]))
+        if snow_depth:
+            var2[k] = np.abs(var2[k])
     return avg, var1, var2
 
 
@@ -112,7 +115,7 @@ def plot_graphs(cpd_dict, sd_dict):
     :return: None
     """
     avg_cpd, var_cpd1, var_cpd2 = mean_var(cpd_dict)
-    avg_sd, var_sd1, var_sd2 = mean_var(sd_dict)
+    avg_sd, var_sd1, var_sd2 = mean_var(sd_dict, True)
     dates = list(avg_cpd.keys())
     dates = [str(d).split()[0] for d in dates]
     plt.plot(dates, avg_cpd.values(), 'go-', label = 'mean')
@@ -149,39 +152,45 @@ def plot_rmse(rmse):
     plt.plot(dates, values)
     plt.show()
 
-def write_data(data_dict, filename):
+
+def write_data(cpd_dict, snow_dict, sample_image):
 
     """
     Write outputs for CPD and Snow-depth
     :param data_dict: Input data dictionary
     :param filename: Output file name
+    :param proj: Original image projection system
+    :param geotransform: Original image geotransformation information
     :return: None
     """
     print('\nWriting outputs...')
     if not os.path.exists('Maps'):
         os.mkdir('Maps')
     driver = gdal.GetDriverByName("GTiff")
-    for k in data_dict.keys():
-        width, height = np.shape(data_dict[k])
-        outfile = 'Maps' + os.sep + str(k).split()[0] + '_' + filename + '.tif'
-        outdata = driver.Create(outfile, height, width, 1, gdal.GDT_Float32)
-        outdata.GetRasterBand(1).WriteArray(data_dict[k])
+    for k in cpd_dict.keys():
+        outfile = 'Maps' + os.sep + str(k).split()[0] + '_' + 'CPD_SD' + '.tif'
+        outdata = driver.CreateCopy(outfile, sample_image)
+        outdata.GetRasterBand(2).WriteArray(cpd_dict[k])
+        outdata.GetRasterBand(3).WriteArray(snow_dict[k])
         outdata.FlushCache()
     print('All Maps created!')
 
 
 # Driver Code
-cpd_dict, sd_dict, rmse_cpd_dict = calc_snow_depth(r'TIFs')
-plt.title('CPD for 08Jan16')
-plt.imshow(cpd_dict[dt.datetime.strptime('08Jan16','%d%b%y')])
+image_dict = read_c2_matrices(r'C:\Users\s6038174\Downloads\ITC\SAYANTAN\shashi kumar\Exported')
+cpd_dict, sd_dict, rmse_cpd_dict = calc_snow_depth(image_dict)
+"""
+plt.title('CPD for 08Jun17')
+plt.imshow(cpd_dict[dt.datetime.strptime('08Jun17','%d%b%y')])
 plt.colorbar()
 plt.show()
-plt.imshow(sd_dict[dt.datetime.strptime('08Jan16','%d%b%y')])
-plt.title('Snow-depth for 08Jan16')
+plt.imshow(sd_dict[dt.datetime.strptime('08Jun17','%d%b%y')])
+plt.title('Snow-depth for 08Jun17')
 plt.colorbar()
 plt.show()
 #plot_rmse(rmse_cpd_dict)
 print(rmse_cpd_dict)
 plot_graphs(cpd_dict, sd_dict)
-write_data(cpd_dict, 'CPD')
-write_data(sd_dict, 'Snow-depth')
+"""
+sample_image = list(image_dict.values())[0][0]
+write_data(cpd_dict, sd_dict, sample_image)
