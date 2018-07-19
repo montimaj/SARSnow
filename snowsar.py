@@ -153,14 +153,13 @@ def plot_rmse(rmse):
     plt.show()
 
 
-def write_data(cpd_dict, snow_dict, sample_image):
+def write_data(cpd_dict, snow_dict, image_dict):
 
     """
     Write outputs for CPD and Snow-depth
-    :param data_dict: Input data dictionary
-    :param filename: Output file name
-    :param proj: Original image projection system
-    :param geotransform: Original image geotransformation information
+    :param cpd_dict: CPD dictionary
+    :param snow_dict: Snow depth dictionary
+    :param image_dict: Input image dictionary
     :return: None
     """
     print('\nWriting outputs...')
@@ -169,7 +168,7 @@ def write_data(cpd_dict, snow_dict, sample_image):
     driver = gdal.GetDriverByName("GTiff")
     for k in cpd_dict.keys():
         outfile = 'Maps' + os.sep + str(k).split()[0] + '_' + 'CPD_SD' + '.tif'
-        outdata = driver.CreateCopy(outfile, sample_image)
+        outdata = driver.CreateCopy(outfile, image_dict[k][0])
         outdata.GetRasterBand(2).WriteArray(cpd_dict[k])
         outdata.GetRasterBand(3).WriteArray(snow_dict[k])
         outdata.FlushCache()
@@ -179,7 +178,7 @@ def write_data(cpd_dict, snow_dict, sample_image):
 # Driver Code
 image_dict = read_c2_matrices(r'C:\Users\s6038174\Downloads\ITC\SAYANTAN\shashi kumar\Exported')
 cpd_dict, sd_dict, rmse_cpd_dict = calc_snow_depth(image_dict)
-"""
+
 plt.title('CPD for 08Jun17')
 plt.imshow(cpd_dict[dt.datetime.strptime('08Jun17','%d%b%y')])
 plt.colorbar()
@@ -191,6 +190,5 @@ plt.show()
 #plot_rmse(rmse_cpd_dict)
 print(rmse_cpd_dict)
 plot_graphs(cpd_dict, sd_dict)
-"""
-sample_image = list(image_dict.values())[0][0]
-write_data(cpd_dict, sd_dict, sample_image)
+
+write_data(cpd_dict, sd_dict, image_dict)
