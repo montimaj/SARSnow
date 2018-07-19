@@ -1,4 +1,3 @@
-from scipy.ndimage import gaussian_filter
 from osgeo import gdal
 from collections import defaultdict
 import glob
@@ -6,6 +5,15 @@ import os
 import matplotlib.pyplot as plt
 import datetime as dt
 import numpy as np
+import cv2
+
+"""
+Copolar Phase Difference (CPD) and Snow-depth Analysis Code for Module 13: Advanced Image Analysis
+Author: Sayantan Majumdar
+Email: s.majumdar@student.utwente.nl
+Project Group: 8
+Python-Version: 3.6
+"""
 
 
 def read_c2_matrices(dir, pattern = '*.tif'):
@@ -37,6 +45,18 @@ def calc_cpd(real_band, imag_band):
     return np.rad2deg(np.arctan2(imag_band, real_band))
 
 
+def get_rmse(x, y):
+
+    """
+    Calculate RMSE
+    :param x: Numpy array
+    :param y: Numpy array
+    :return: RMSE
+    """
+    mse = np.mean((x - y) ** 2)
+    return np.sqrt(mse)
+
+
 def calc_snow_depth(dir, freq = 9650E+6):
 
     """
@@ -49,18 +69,19 @@ def calc_snow_depth(dir, freq = 9650E+6):
     image_dict = read_c2_matrices(dir)
     cpd_dict = {}
     snow_depth = {}
+    rmse_cpd_dict = {}
     for k, v in image_dict.items():
         cpd = []
         print('Calculating CPD for ' + str(k).split()[0] + '...')
         for images in v:
-            cpd.append(calc_cpd(images.GetRasterBand(2).ReadAsArray(),
-                                          images.GetRasterBand(3).ReadAsArray()))
+            v = calc_cpd(images.GetRasterBand(2).ReadAsArray(),
+                                          images.GetRasterBand(3).ReadAsArray())
+            cpd.append(cv2.blur(v, (63, 51)))
+        rmse_cpd_dict[k] = get_rmse(cpd[0], cpd[1])
         cpd_dict[k] = (cpd[0] + cpd[1])/2
-        print('Applying Gaussian Filter to CPD...')
-        cpd_dict[k] = gaussian_filter(cpd_dict[k], sigma=3)
         snow_depth[k] = np.abs(-(3E+8)/freq * cpd_dict[k]/(4*np.pi*0.02))
     print('Calculation complete!')
-    return cpd_dict, snow_depth
+    return cpd_dict, snow_depth, rmse_cpd_dict
 
 
 def mean_var(value_dict):
@@ -93,16 +114,16 @@ def plot_graphs(cpd_dict, sd_dict):
     avg_sd, var_sd1, var_sd2 = mean_var(sd_dict)
     dates = list(avg_cpd.keys())
     dates = [str(d).split()[0] for d in dates]
-    plt.plot(dates, avg_cpd.values(), 'go-', label = 'mean+sigma')
-    plt.plot(dates, var_cpd1.values(), 'ro-', label = 'mean')
+    plt.plot(dates, avg_cpd.values(), 'go-', label = 'mean')
+    plt.plot(dates, var_cpd1.values(), 'ro-', label = 'mean+sigma')
     plt.plot(dates, var_cpd2.values(), 'bo-', label = 'mean-sigma')
     plt.xlabel('Dates')
     plt.ylabel('CPD (Degrees)')
     plt.legend()
     plt.title('Temporal variations of CPD')
     plt.show()
-    plt.plot(dates, avg_sd.values(), 'go-', label = 'mean+sigma')
-    plt.plot(dates, var_sd1.values(), 'ro-', label = 'mean')
+    plt.plot(dates, avg_sd.values(), 'go-', label = 'mean')
+    plt.plot(dates, var_sd1.values(), 'ro-', label = 'mean+sigma')
     plt.plot(dates, var_sd2.values(), 'bo-', label = 'mean-sigma')
     plt.xlabel('Dates')
     plt.ylabel('Snow-depth (m)')
@@ -110,6 +131,22 @@ def plot_graphs(cpd_dict, sd_dict):
     plt.title('Temporal variations of Snow-depth')
     plt.show()
 
+
+def plot_rmse(rmse):
+
+    """
+    Plot TDX, TSX CPD RMSE graphs
+    :param rmse: RMSE numpy array
+    :return: None
+    """
+    dates = list(rmse.keys())
+    dates = [str(d).split()[0] for d in dates]
+    values = []
+    for k in sorted(rmse.keys()):
+        values.append(rmse[k])
+    plt.title('CPD RMSE')
+    plt.plot(dates, values)
+    plt.show()
 
 def write_data(data_dict, filename):
 
@@ -132,7 +169,8 @@ def write_data(data_dict, filename):
     print('All Maps created!')
 
 
-cpd_dict, sd_dict = calc_snow_depth(r'TIFs')
+# Driver Code
+cpd_dict, sd_dict, rmse_cpd_dict = calc_snow_depth(r'TIFs')
 plt.title('CPD for 08Jan16')
 plt.imshow(cpd_dict[dt.datetime.strptime('08Jan16','%d%b%y')])
 plt.colorbar()
@@ -141,6 +179,8 @@ plt.imshow(sd_dict[dt.datetime.strptime('08Jan16','%d%b%y')])
 plt.title('Snow-depth for 08Jan16')
 plt.colorbar()
 plt.show()
+#plot_rmse(rmse_cpd_dict)
+print(rmse_cpd_dict)
 plot_graphs(cpd_dict, sd_dict)
 write_data(cpd_dict, 'CPD')
 write_data(sd_dict, 'Snow-depth')
