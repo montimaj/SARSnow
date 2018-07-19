@@ -11,6 +11,7 @@ import cv2
 Copolar Phase Difference (CPD) and Snow-depth Analysis Code for Module 13: Advanced Image Analysis
 Author: Sayantan Majumdar
 Email: s.majumdar@student.utwente.nl
+Student number: s6038174
 Project Group: 8
 Python-Version: 3.6
 """
