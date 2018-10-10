@@ -1,0 +1,6 @@
+PROCESS  unwrap
+UW_OUT_FILE Outdata/Interfero_unw.uint
+UW_SNAPHU_coh Outdata/Coherence.coh
+UW_SNAPHU_MODE TOPO
+PREVIEW on
+STOP

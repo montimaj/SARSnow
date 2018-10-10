@@ -1,0 +1,4 @@
+PROCESS   resample
+RS_METHOD cc6p
+RS_SHIFTAZI on
+STOP

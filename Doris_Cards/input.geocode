@@ -1,0 +1,5 @@
+PROCESS GEOCODE
+GEO_OUT_LAM Outdata/lam.raw
+GEO_OUT_PHI Outdata/phi.raw
+PREVIEW on
+STOP

@@ -1,0 +1,5 @@
+PROCESS  coherence
+COH_OUT_COH  Outdata/Coherence.coh
+COH_MULTILOOK 1 1
+COH_WINSIZE   15 3
+STOP

@@ -1,0 +1,4 @@
+PROCESS   coarsecorr
+CC_NWIN   100
+CC_WINSIZE 512 512
+STOP

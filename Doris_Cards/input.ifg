@@ -1,0 +1,9 @@
+PROCESS  interfero
+PROCESS  comprefpha
+PROCESS  subtrrefpha
+INT_OUT_CINT  Outdata/Interfero_New.cint
+INT_MULTILOOK  1 1
+FE_DEGREE      5
+SRP_OUT_CINT  Outdata/Ref_Phase.srp
+SRP_MULTILOOK  1 1
+STOP
