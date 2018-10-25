@@ -1,7 +1,7 @@
 from osgeo import gdal
 import numpy as np
 import affine
-
+import cv2
 
 def csv_merge(csvfiles):
     data = ""
@@ -39,7 +39,10 @@ def rel2absdem(rdem, gcps):
     ground_points = gcps.readlines()
     rdem_arr = rdem.GetRasterBand(1).ReadAsArray()
     rdem_arr[rdem_arr == 0.] = np.nan
+    #kernel = np.ones((32, 32), np.float32)/32**2
+    #rdem_arr = cv2.filter2D(rdem_arr, -1, kernel)
     zero_abs_height = []
+    ground_pixels = []
     for gcp in ground_points:
         val = gcp.split(',')
         x = float(val[1])
@@ -47,13 +50,21 @@ def rel2absdem(rdem, gcps):
         z = float(val[3])
         px, py = retrieve_pixel_coords((x, y), rdem)
         rel_height = rdem_arr[py, px]
-        if rel_height <= 0:
+        if rel_height < 0:
             zero_abs_height.append(z - rel_height)
-        else:
+        elif rel_height > 0:
             zero_abs_height.append(rel_height - z)
+        else:
+            zero_abs_height.append(z)
+        ground_pixels.append((px, py, z))
     zero_abs_height = np.mean(zero_abs_height)
+    print(zero_abs_height)
     rdem_arr += zero_abs_height
-    rdem_arr[rdem_arr == np.nan] = 0.
+    for pixels in ground_pixels:
+        rdem_arr[pixels[1], pixels[0]] = pixels[2]
+    #rdem_arr = cv2.bilateralFilter(rdem_arr, 9, 100, 100)
+    rdem_arr[np.isnan(rdem_arr)] = 0.
+    #print(np.min(rdem_arr))
     write_dem(rdem_arr, rdem.GetProjection(), rdem.GetGeoTransform())
 
 
