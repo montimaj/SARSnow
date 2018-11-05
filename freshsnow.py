@@ -7,7 +7,7 @@ import utm
 EFF_AIR = 1.0005
 EFF_ICE = 3.18
 ICE_DENSITY = 0.917 # gm/cc
-SNOW_DENSITY = 0.13 # gm/cc
+SNOW_DENSITY = 0.13 # gm/cc FN = 0.12, AN = 0.14
 WAVELENGTH = 3.10880853
 NO_DATA_VALUE = 0.
 
@@ -68,6 +68,7 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, outfile, axial_ratio=2, shape='o')
     lia_data = (lia_tdx + lia_tsx) / 2.
     fvol = SNOW_DENSITY/ICE_DENSITY
     depolarisation_factors = get_depolarisation_factor(axial_ratio, shape)
+    print('DEPOLARISATION FACTORS = ', depolarisation_factors)
     effx = get_effective_permittivity(fvol, depolarisation_factors[0])
     effy = get_effective_permittivity(fvol, depolarisation_factors[1])
     effz = get_effective_permittivity(fvol, depolarisation_factors[2])
