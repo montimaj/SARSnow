@@ -102,18 +102,18 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, outfile, axial_ratio=2, shape='o')
     #write_tif(fresh_sd_flt, cpd_file_tdx, outfile + '_flt')
 
 
-def validate_fresh_snow(fsd_file, geocoords, ground_value = 3.46):
+def validate_fresh_snow(fsd_file, geocoords):
     fsd_file = gdal.Open(fsd_file)
-    utm_geocoords = utm.from_latlon(geocoords[0], geocoords[1])[:2]
-    px, py = retrieve_pixel_coords(utm_geocoords, fsd_file)
+    #geocoords = utm.from_latlon(geocoords[0], geocoords[1])[:2]
+    px, py = retrieve_pixel_coords(geocoords, fsd_file)
     fsd_arr = fsd_file.GetRasterBand(1).ReadAsArray()
-    fsd_dhundi = fsd_arr[py - 7: py + 7, px - 7: px + 7]
+    fsd_dhundi = fsd_arr[py - 11: py + 11, px - 11: px + 11]
     np.savetxt('validation.csv', fsd_dhundi)
     mean_fsd, max_fsd = np.mean(fsd_dhundi[fsd_dhundi > 0]), np.max(fsd_dhundi[fsd_dhundi > 0])
-    max_pos = np.where(fsd_dhundi == max_fsd)
-    print('Pixels = ', (px, py), 'Max_pos = ', max_pos)
+    max_pos = np.where(fsd_arr == max_fsd) # ground value = 3.4
+    print('Pixels = ', (py, px), 'Max_pos = ', max_pos)
     print('DHUNDI FRESH SNOW DEPTH = ', mean_fsd, max_fsd)
 
 
-cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'fsd')
-validate_fresh_snow('fsd.tif', (32.3560617, 77.1234832))
+#cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'fsd')
+validate_fresh_snow('fsd.tif', (700089.771, 3581794.5556))
