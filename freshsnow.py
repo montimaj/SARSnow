@@ -52,15 +52,17 @@ def write_tif(arr, src_file, outfile='test'):
     out.FlushCache()
 
 
-def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, outfile, axial_ratio=2, shape='o'):
+def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, axial_ratio=2, shape='o'):
     print('LOADING FILES TO MEMORY...')
 
     cpd_file_tdx = gdal.Open(cpd_file_tdx)
     cpd_file_tsx = gdal.Open(cpd_file_tsx)
+    layover_file = gdal.Open(layover_file)
     cpd_tdx = cpd_file_tdx.GetRasterBand(1).ReadAsArray()
     cpd_tsx = cpd_file_tsx.GetRasterBand(1).ReadAsArray()
     lia_tdx = cpd_file_tdx.GetRasterBand(3).ReadAsArray()
     lia_tsx = cpd_file_tsx.GetRasterBand(3).ReadAsArray()
+    layover_arr = layover_file.GetRasterBand(1).ReadAsArray()
 
     print('ALL FILES LOADED... CALCULATING PARAMETERS...')
 
@@ -80,7 +82,7 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, outfile, axial_ratio=2, shape='o')
     for i in range(rows):
         for j in range(cols):
             cpd = cpd_data[j, i]
-            if cpd > 0:
+            if cpd > 0 and layover_arr[j, i] == 0.:
                 sin_lia_sq = np.sin(lia_data[j, i]) ** 2
                 effH = effx ** 2
                 effV = effy * np.cos(lia_data[j, i]) ** 2 + effz * sin_lia_sq
@@ -115,5 +117,5 @@ def validate_fresh_snow(fsd_file, geocoords):
     print('DHUNDI FRESH SNOW DEPTH = ', mean_fsd, max_fsd)
 
 
-#cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'fsd')
-validate_fresh_snow('fsd.tif', (700089.771, 3581794.5556))
+cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'avg_layover.tif', 'fsd')
+validate_fresh_snow('fsd.tif', (700097.9845, 3581763.7627))
