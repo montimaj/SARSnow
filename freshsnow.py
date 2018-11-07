@@ -1,8 +1,7 @@
 from osgeo import gdal
 import numpy as np
 import affine
-import utm
-#import cv2
+import cv2
 
 EFF_AIR = 1.0005
 EFF_ICE = 3.18
@@ -52,7 +51,22 @@ def write_tif(arr, src_file, outfile='test'):
     out.FlushCache()
 
 
-def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, axial_ratio=2, shape='o'):
+def is_fresh_snow_neighborhood(cpd_data, pos, size):
+    py, px = pos
+    ny1, ny2, nx1, nx2 = py, py + size, px, px + size
+    if ny1 - size >=0:
+        ny1 -= size
+    if nx1 - size >=0:
+        nx1 -= size
+    if ny2 > cpd_data.shape[0]:
+       ny2 = py
+    if nx2 > cpd_data.shape[1]:
+       nx2 = px
+    fs_neighbor = cpd_data[ny1: ny2, nx1: nx2]
+    return len(fs_neighbor[fs_neighbor > 0]) > 0
+
+
+def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, neighborhood_size=11, axial_ratio=2, shape='o'):
     print('LOADING FILES TO MEMORY...')
 
     cpd_file_tdx = gdal.Open(cpd_file_tdx)
@@ -67,7 +81,9 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, axial_ratio
     print('ALL FILES LOADED... CALCULATING PARAMETERS...')
 
     cpd_data = (cpd_tdx + cpd_tsx) / 2.
+    #cpd_data = cv2.bilateralFilter(cpd_data, 9, 100, 100)
     lia_data = (lia_tdx + lia_tsx) / 2.
+    #lia_data = cv2.bilateralFilter(lia_data, 9, 100, 100)
     fvol = SNOW_DENSITY/ICE_DENSITY
     depolarisation_factors = get_depolarisation_factor(axial_ratio, shape)
     print('DEPOLARISATION FACTORS = ', depolarisation_factors)
@@ -82,7 +98,8 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, axial_ratio
     for i in range(rows):
         for j in range(cols):
             cpd = cpd_data[j, i]
-            if cpd > 0 and layover_arr[j, i] == 0.:
+            if layover_arr[j, i] == 0. and (cpd > 0 or (not np.isnan(cpd) and
+                                                        is_fresh_snow_neighborhood(cpd_data, (j, i), neighborhood_size))):
                 sin_lia_sq = np.sin(lia_data[j, i]) ** 2
                 effH = effx ** 2
                 effV = effy * np.cos(lia_data[j, i]) ** 2 + effz * sin_lia_sq
@@ -91,17 +108,9 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, axial_ratio
             else:
                 fresh_sd[j, i] = np.float32(NO_DATA_VALUE)
 
-    #print('INVOKING BILATERAL FILTER...')
-
-    #fresh_sd[fresh_sd != -32767.0] = cv2.bilateralFilter(, 9, 100, 100)
-
     print('WRITING UNFILTERED IMAGE...')
 
     write_tif(fresh_sd, cpd_file_tdx, outfile)
-
-    #print('WRITING FILTERED IMAGE...')
-
-    #write_tif(fresh_sd_flt, cpd_file_tdx, outfile + '_flt')
 
 
 def validate_fresh_snow(fsd_file, geocoords):
@@ -117,5 +126,14 @@ def validate_fresh_snow(fsd_file, geocoords):
     print('DHUNDI FRESH SNOW DEPTH = ', mean_fsd, max_fsd)
 
 
-cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'avg_layover.tif', 'fsd')
-validate_fresh_snow('fsd.tif', (700097.9845, 3581763.7627))
+def filter_image(image_file, outfile):
+    image_file = gdal.Open(image_file)
+    img_arr = image_file.GetRasterBand(1).ReadAsArray()
+    print('WRITING BILATERAL FILTERED IMAGE...')
+    img_arr[img_arr != NO_DATA_VALUE] = np.array(cv2.bilateralFilter(img_arr[img_arr != NO_DATA_VALUE], 2, 2, 2)).flat
+    write_tif(img_arr, image_file, outfile)
+
+
+#cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'avg_layover.tif', 'fsd')
+filter_image('Fresh_Snow/Out/fsd.tif', 'Fresh_Snow/Out/fsd_flt')
+validate_fresh_snow('Fresh_Snow/Out/fsd_flt.tif', (700097.9845, 3581763.7627))
