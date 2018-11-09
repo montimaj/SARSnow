@@ -51,18 +51,22 @@ def write_tif(arr, src_file, outfile='test'):
     out.FlushCache()
 
 
-def is_fresh_snow_neighborhood(cpd_data, pos, size):
+def get_subset_image(image_arr, pos, size):
     py, px = pos
     ny1, ny2, nx1, nx2 = py, py + size, px, px + size
-    if ny1 - size >=0:
+    if ny1 - size >= 0:
         ny1 -= size
-    if nx1 - size >=0:
+    if nx1 - size >= 0:
         nx1 -= size
-    if ny2 > cpd_data.shape[0]:
-       ny2 = py
-    if nx2 > cpd_data.shape[1]:
-       nx2 = px
-    fs_neighbor = cpd_data[ny1: ny2, nx1: nx2]
+    if ny2 > image_arr.shape[0]:
+        ny2 = py
+    if nx2 > image_arr.shape[1]:
+        nx2 = px
+    return image_arr[ny1: ny2, nx1: nx2]
+
+
+def is_fresh_snow_neighborhood(cpd_data, pos, size):
+    fs_neighbor = get_subset_image(cpd_data, pos, size)
     return len(fs_neighbor[fs_neighbor > 0]) > 0
 
 
@@ -112,28 +116,37 @@ def cpd2freshsnow(cpd_file_tdx, cpd_file_tsx, layover_file, outfile, neighborhoo
 
     write_tif(fresh_sd, cpd_file_tdx, outfile)
 
+def get_image_stats(image_arr):
+    return np.min(image_arr), np.max(image_arr), np.mean(image_arr), np.var(image_arr)
 
-def validate_fresh_snow(fsd_file, geocoords):
+
+def validate_fresh_snow(fsd_file, geocoords, validation_file, nsize=11):
     fsd_file = gdal.Open(fsd_file)
     #geocoords = utm.from_latlon(geocoords[0], geocoords[1])[:2]
     px, py = retrieve_pixel_coords(geocoords, fsd_file)
     fsd_arr = fsd_file.GetRasterBand(1).ReadAsArray()
-    fsd_dhundi = fsd_arr[py - 11: py + 11, px - 11: px + 11]
-    np.savetxt('validation.csv', fsd_dhundi)
-    mean_fsd, max_fsd = np.mean(fsd_dhundi[fsd_dhundi > 0]), np.max(fsd_dhundi[fsd_dhundi > 0])
+    print('IMAGE STATS...')
+    print('STUDY AREA FRESH SNOW DEPTH (min, max, mean, var) = ', get_image_stats(fsd_arr[fsd_arr > 0]))
+    fsd_dhundi = get_subset_image(fsd_arr, (py, px), nsize)
+    np.savetxt(validation_file, fsd_dhundi)
+    min_fsd, max_fsd, mean_fsd, var_fsd = get_image_stats(fsd_dhundi[fsd_dhundi > 0])
     max_pos = np.where(fsd_arr == max_fsd) # ground value = 3.4
     print('Pixels = ', (py, px), 'Max_pos = ', max_pos)
-    print('DHUNDI FRESH SNOW DEPTH = ', mean_fsd, max_fsd)
+    print('DHUNDI FRESH SNOW DEPTH (min, max, mean, var) = ', min_fsd, max_fsd, mean_fsd, var_fsd)
 
 
 def filter_image(image_file, outfile):
     image_file = gdal.Open(image_file)
     img_arr = image_file.GetRasterBand(1).ReadAsArray()
-    print('WRITING BILATERAL FILTERED IMAGE...')
-    img_arr[img_arr != NO_DATA_VALUE] = np.array(cv2.bilateralFilter(img_arr[img_arr != NO_DATA_VALUE], 2, 2, 2)).flat
+    print('\nWRITING BILATERAL FILTERED IMAGE...')
+    img_arr[img_arr != NO_DATA_VALUE] = np.array(cv2.bilateralFilter(img_arr[img_arr != NO_DATA_VALUE],
+                                                                     d=3, sigmaColor=2, sigmaSpace=15)).flat
     write_tif(img_arr, image_file, outfile)
 
 
-#cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'avg_layover.tif', 'fsd')
+cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'avg_layover.tif', 'fsd')
+print('UNFILTERED IMAGE VALIDATION...')
+validate_fresh_snow('Fresh_Snow/Out/fsd.tif', (700097.9845, 3581763.7627), 'val.csv')
 filter_image('Fresh_Snow/Out/fsd.tif', 'Fresh_Snow/Out/fsd_flt')
-validate_fresh_snow('Fresh_Snow/Out/fsd_flt.tif', (700097.9845, 3581763.7627))
+print('FILTERED IMAGE VALIDATION...')
+validate_fresh_snow('Fresh_Snow/Out/fsd_flt.tif', (700097.9845, 3581763.7627), 'val_flt.csv', 11)
