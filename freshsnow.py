@@ -140,11 +140,11 @@ def filter_image(image_file, outfile):
     img_arr = image_file.GetRasterBand(1).ReadAsArray()
     print('\nWRITING BILATERAL FILTERED IMAGE...')
     img_arr[img_arr != NO_DATA_VALUE] = np.array(cv2.bilateralFilter(img_arr[img_arr != NO_DATA_VALUE],
-                                                                     d=3, sigmaColor=2, sigmaSpace=15)).flat
+                                                                     d=-1, sigmaColor=2, sigmaSpace=7)).flat
     write_tif(img_arr, image_file, outfile)
 
 
-cpd2freshsnow('CoSSC_TDX.tif', 'CoSSC_TSX.tif', 'avg_layover.tif', 'fsd')
+cpd2freshsnow('CoSSC_TDX_SRTM.tif', 'CoSSC_TSX_SRTM.tif', 'avg_layover.tif', 'fsd')
 print('UNFILTERED IMAGE VALIDATION...')
 validate_fresh_snow('Fresh_Snow/Out/fsd.tif', (700097.9845, 3581763.7627), 'val.csv')
 filter_image('Fresh_Snow/Out/fsd.tif', 'Fresh_Snow/Out/fsd_flt')
