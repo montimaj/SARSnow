@@ -28,7 +28,7 @@ def read_images(path, imgformat='*.tif'):
     return images
 
 
-def get_averaged_dem(dem_files, imgformat='*.tif'):
+def create_averaged_dem(dem_files, imgformat='*.tif'):
     dem_images_dict = read_images(dem_files, imgformat)
     for date, image_list in dem_images_dict.items():
         print('Averaging date: ', date)
@@ -47,10 +47,25 @@ def get_averaged_dem(dem_files, imgformat='*.tif'):
         write_dem_tif(avg_arr_list, srcfile, 'DEM_Avg/Avg_DEM_' + date)
 
 
+def create_error_maps(dem_files_dict, dem_band=1, ref_dem_band=2):
+    for date in dem_files_dict.keys():
+        dem_file = dem_files_dict[date][0]
+        tdm_arr = dem_file.GetRasterBand(dem_band).ReadAsArray()
+        ref_arr = dem_file.GetRasterBand(ref_dem_band).ReadAsArray()
+        err_arr = np.zeros(tdm_arr.shape)
+        err_arr.fill(NO_DATA_VALUE)
+        print('Calculating error map for:', date)
+        for i in range(err_arr.shape[1]):
+            for j in range(err_arr.shape[0]):
+                if tdm_arr[j, i] != NO_DATA_VALUE and ref_arr[j, i] != NO_DATA_VALUE:
+                    err_arr[j, i] = np.abs(tdm_arr[j, i] - ref_arr[j, i])
+        write_dem_tif([tdm_arr, err_arr], dem_file, 'DEM_Errors_VV/DEM_Error_' + date)
+
+
 def write_dem_tif(dem_arr_list, src_file, outfile='test', no_data_value=NO_DATA_VALUE):
     driver = gdal.GetDriverByName("GTiff")
     num_bands = len(dem_arr_list)
-    absdem = driver.Create(outfile + '.tif', dem_arr_list[0].shape[1], dem_arr_list[1].shape[0], num_bands, gdal.GDT_Float32)
+    absdem = driver.Create(outfile + '.tif', dem_arr_list[0].shape[1], dem_arr_list[0].shape[0], num_bands, gdal.GDT_Float32)
     absdem.SetProjection(src_file.GetProjection())
     absdem.SetGeoTransform(src_file.GetGeoTransform())
     for i in range(num_bands):
@@ -70,7 +85,7 @@ def get_min_error_key(err_file_dict, pos):
     return NO_DATA_VALUE
 
 
-def generate_optimized_dem(dem_files_dict, dem_band=1, err_band=4):
+def generate_optimized_dem(dem_files_dict, dem_band=1, err_band=2):
     dem_val_dict = {}
     dem_err_dict = {}
     ncols, nrows = 0, 0
@@ -93,8 +108,8 @@ def generate_optimized_dem(dem_files_dict, dem_band=1, err_band=4):
                 minimized_error[j, i] = dem_err_dict[min_err_key][j, i]
         print('At row:', i)
     src_file_key = list(dem_files_dict.keys())[0]
-    write_dem_tif(opt_dem, dem_files_dict[src_file_key], 'dem')
-    write_dem_tif(minimized_error, dem_files_dict[src_file_key], 'error')
+    write_dem_tif([opt_dem], dem_files_dict[src_file_key][0], 'dem')
+    write_dem_tif([minimized_error], dem_files_dict[src_file_key][0], 'error')
 
 
 def filter_dem(dem_file, outfile):
@@ -105,7 +120,9 @@ def filter_dem(dem_file, outfile):
     write_dem_tif(dem_arr, dem_file, outfile)
 
 
-get_averaged_dem('Rel_DEM_Tifs', '*.tif')
-#dem_files_dict = read_images('Clipped_DEM')
-#generate_optimized_dem(dem_files_dict)
+#create_averaged_dem('Rel_DEM_Tifs', '*.tif')
+dem_files_dict = read_images('Clipped_DEM_VV')
+create_error_maps(dem_files_dict)
+dem_files_dict = read_images('DEM_Errors_VV')
+generate_optimized_dem(dem_files_dict)
 #filter_dem('/home/iirs/THESIS/SnowSAR/Wet_Snow_Stack/dem.tif', '/home/iirs/THESIS/SnowSAR/Wet_Snow_Stack/dem_flt')
