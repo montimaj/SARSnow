@@ -4,8 +4,20 @@ import os
 import glob
 import cv2
 from collections import defaultdict
+import affine
+import matplotlib.pyplot as plt
 
 NO_DATA_VALUE = -32768.0
+
+def csv_merge(csvfiles):
+    data = ""
+    for csv in csvfiles:
+        csv = open(csv, 'r')
+        data += csv.read()
+        csv.close()
+    merged = open('Merged.csv', 'w')
+    merged.write(data)
+    merged.close()
 
 
 def read_images(path, imgformat='*.tif', makelist=False):
@@ -60,6 +72,15 @@ def create_error_maps(dem_files_dict, dem_band=1, ref_dem_band=2, outdir='DEM_Er
         write_dem_tif([tdm_arr, err_arr], dem_file, outdir + '/DEM_Error_' + key)
 
 
+def retrieve_pixel_coords(geo_coord, data_source):
+    x, y = geo_coord[0], geo_coord[1]
+    forward_transform = affine.Affine.from_gdal(*data_source.GetGeoTransform())
+    reverse_transform = ~forward_transform
+    px, py = reverse_transform * (x, y)
+    px, py = int(px + 0.5), int(py + 0.5)
+    return px, py
+
+
 def write_dem_tif(dem_arr_list, src_file, outfile='test', no_data_value=NO_DATA_VALUE):
     driver = gdal.GetDriverByName("GTiff")
     num_bands = len(dem_arr_list)
@@ -81,6 +102,28 @@ def get_min_error_key(err_file_dict, pos):
     if error_dict:
         return min(error_dict, key=error_dict.get)
     return NO_DATA_VALUE
+
+
+def rectify_opt_dem(opt_dem_arr, opt_dem_file, gcp_file):
+    gcps = open(gcp_file, 'r')
+    ground_points = gcps.readlines()
+    ground_pixels = []
+    elevation = []
+    for gcp in ground_points:
+        val = gcp.split(',')
+        x = round(float(val[1]))
+        y = round(float(val[2]))
+        # latlon = utm.to_latlon(x, y, 43, 'U')
+        latlon = x, y
+        z = float(val[3])
+        px, py = retrieve_pixel_coords(latlon, opt_dem_file)
+        if px <= opt_dem_arr.shape[0] and py <= opt_dem_arr.shape[1]:
+            ground_pixels.append((x, y))
+            elevation.append(z)
+            opt_dem_arr[py - 1: py + 2, px - 1: px + 2] = z
+    plt.plot(elevation)
+    plt.show()
+    return opt_dem_arr
 
 
 def generate_optimized_dem(dem_files_dict, dem_band=1, err_band=2):
@@ -118,9 +161,18 @@ def filter_dem(dem_file, outfile):
     write_dem_tif(dem_arr, dem_file, outfile)
 
 
+def optimize_dem(dem_file, gcps):
+    dem = gdal.Open(dem_file)
+    dem_arr = dem.GetRasterBand(1).ReadAsArray()
+    opt_dem = rectify_opt_dem(dem_arr, dem, gcps)
+    write_dem_tif([opt_dem], dem, 'dem_rectified')
+
+
 #create_averaged_dem('Rel_DEM_Tifs', '*.tif')
-dem_files_dict = read_images('Clipped_DEM')
-create_error_maps(dem_files_dict)
-dem_files_dict = read_images('DEM_Errors')
-generate_optimized_dem(dem_files_dict)
+#dem_files_dict = read_images('Clipped_DEM')
+#create_error_maps(dem_files_dict)
+csv_merge(['../Field/DHUNDI_STEADY.txt', '../Field/ROHTANG.txt'])
+optimize_dem('./Wet_Snow_Stack/DEM_Tests/All_DEM/dem.tif', 'Merged.csv')
+#dem_files_dict = read_images('DEM_Errors')
+#generate_optimized_dem(dem_files_dict, 'Merged.csv')
 #filter_dem('/home/iirs/THESIS/SnowSAR/Wet_Snow_Stack/dem.tif', '/home/iirs/THESIS/SnowSAR/Wet_Snow_Stack/dem_flt')
