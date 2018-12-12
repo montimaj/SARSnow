@@ -1,7 +1,6 @@
 from osgeo import gdal
 import numpy as np
-import affine
-#import cv2
+#import affine
 import scipy.stats as st
 #import matplotlib.pyplot as plt
 
@@ -66,40 +65,45 @@ def get_gaussian_kernel(ksize, nsig=3):
     return kernel
 
 
-# def is_fresh_snow_neighborhood(cpd_data, pos, size):
-#     fs_neighbor = get_ensemble_window(cpd_data, pos, size)
-#     return len(fs_neighbor[fs_neighbor > 0]) > 0
+def get_ensemble_window(image_arr, index, wsize):
+    startx = index[0] - wsize[0]
+    starty = index[1] - wsize[1]
+    if startx < 0:
+        startx = 0
+    if starty < 0:
+        starty = 0
+    endx = index[0] + wsize[0] + 1
+    endy = index[1] + wsize[1] + 1
+    limits = image_arr.shape[0] + 1, image_arr.shape[1] + 1
+    if endx > limits[0] + 1:
+        endx = limits[0] + 1
+    if endy > limits[1] + 1:
+        endy = limits[1] + 1
+    return image_arr[startx: endx, starty: endy]
 
-def get_ensemble_avg(image_arr, wsize=(10, 10), nsig=3):
+
+def is_fresh_snow_neighborhood(cpd_data, pos, size):
+    size = int(size / 2), int(size / 2)
+    fs_neighbor = get_ensemble_window(np.transpose(cpd_data), pos, size)
+    return len(fs_neighbor[fs_neighbor > 0]) > 0
+
+
+def get_ensemble_avg(image_arr, wsize=(10, 10), gaussian_kernel=True, nsig=3):
     print('PERFORMING ENSEMBLE AVERAGING...')
     image_arr = np.transpose(image_arr)
-    max_x, max_y = image_arr.shape
-    max_x += 1
-    max_y += 1
     emat = np.full_like(image_arr, NO_DATA_VALUE, dtype=np.float32)
     for index, value in np.ndenumerate(image_arr):
         if not np.isnan(value):
-            startx = index[0] - wsize[0]
-            starty = index[1] - wsize[1]
-            if startx < 0:
-                startx = 0
-            if starty < 0:
-                starty = 0
-            endx = index[0] + wsize[0] + 1
-            endy = index[1] + wsize[1] + 1
-            if endx > max_x + 1:
-                endx = max_x + 1
-            if endy > max_y + 1:
-                endy = max_y + 1
-            ensemble_window = image_arr[startx: endx, starty: endy]
-            gkernel = get_gaussian_kernel(ensemble_window.shape, nsig)
-            wt_values = gkernel * ensemble_window
-            emat[index] = np.mean(wt_values[~np.isnan(wt_values)])
+            ensemble_window = get_ensemble_window(image_arr, index, wsize)
+            if gaussian_kernel:
+                gkernel = get_gaussian_kernel(ensemble_window.shape, nsig)
+                ensemble_window *= gkernel
+            emat[index] = np.mean(ensemble_window[~np.isnan(ensemble_window)])
             print(index, emat[index])
     return np.transpose(emat)
 
 
-def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia):
+def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_kernel):
     print('LOADING FILES TO MEMORY...')
 
     cpd_file_tdx = gdal.Open(cpd_file_tdx)
@@ -110,7 +114,7 @@ def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia):
     lia_tsx = cpd_file_tsx.GetRasterBand(3).ReadAsArray()
 
     print('ALL FILES LOADED... AVERAGING...')
-    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2.)
+    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., gaussian_kernel)
     lia_data = (lia_tdx + lia_tsx) / 2.
     print('Writing avg data...')
     write_tif(cpd_data, cpd_file_tdx, outfile_cpd)
@@ -136,24 +140,28 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, outfile, axial_ratio
 
     print('PIXELWISE COMPUTATION STARTED...')
     print('Mean incidence angle=', MEAN_INC_ANGLE)
-    cols, rows = cpd_data.shape
-    fresh_sd = np.zeros(cpd_data.shape).astype(np.float32)
-    for i in range(rows):
-        for j in range(cols):
-            cpd = cpd_data[j, i]
-            if layover_arr[j, i] == 0. and cpd > 0:
-                sin_inc_sq = np.sin(lia_data[j, i]) ** 2
-                effH = effx
-                effV = effy * np.cos(lia_data[j, i]) ** 2 + effz * sin_inc_sq
-                xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
-                print('Effective permittivities=', str(effH), str(effV))
-                print('Del Xeta=', str(xeta_diff))
-                fresh_sd[j, i] = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
-            else:
-                fresh_sd[j, i] = np.float32(NO_DATA_VALUE)
+    cpd_data = np.transpose(cpd_data)
+    layover_arr = np.transpose(layover_arr)
+    lia_data = np.transpose(lia_data)
+    fresh_sd = np.full_like(cpd_data, NO_DATA_VALUE, dtype=np.float32)
+    for index, cpd in np.ndenumerate(cpd_data):
+        if layover_arr[index] == 0. and (cpd > 0 or (not np.isnan(cpd) and
+                                                     is_fresh_snow_neighborhood(cpd_data, index, 11))):
+            sin_inc_sq = np.sin(lia_data[index]) ** 2
+            effH = effx
+            effV = effy * np.cos(lia_data[index]) ** 2 + effz * sin_inc_sq
+            xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
+            if not np.isnan(xeta_diff) and xeta_diff != 0:
+                fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
+                if fresh_sd_val < 100:
+                    fresh_sd[index] = fresh_sd_val
+                    print('Effective permittivities=', str(effH), str(effV))
+                    print('Del Xeta=', str(xeta_diff))
+                    print('FSD=', fresh_sd[index])
+
 
     print('WRITING UNFILTERED IMAGE...')
-    write_tif(fresh_sd, avg_cpd_file, outfile)
+    write_tif(np.transpose(fresh_sd), avg_cpd_file, outfile)
 
 
 # def get_image_stats(image_arr):
@@ -175,20 +183,20 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, outfile, axial_ratio
 #     print('DHUNDI FRESH SNOW DEPTH (min, max, mean, var) = ', min_fsd, max_fsd, mean_fsd, var_fsd)
 #
 #
-# def filter_image(image_file, outfile):
-#     image_file = gdal.Open(image_file)
-#     img_arr = image_file.GetRasterBand(1).ReadAsArray()
-#     print('\nWRITING BILATERAL FILTERED IMAGE...')
-#     img_arr[img_arr != NO_DATA_VALUE] = np.array(cv2.bilateralFilter(img_arr[img_arr != NO_DATA_VALUE],
-#                                                                      d=-1, sigmaColor=2, sigmaSpace=7)).flat
-#     write_tif(img_arr, image_file, outfile)
+def filter_image(image_file, outfile, wsize, gaussian_kernel=True, nsig=3):
+    image_file = gdal.Open(image_file)
+    img_arr = image_file.GetRasterBand(1).ReadAsArray()
+    img_arr[img_arr == NO_DATA_VALUE] = np.nan
+    print('\nWRITING FILTERED IMAGE...')
+    flt_arr = get_ensemble_avg(img_arr, wsize, gaussian_kernel, nsig)
+    write_tif(flt_arr, image_file, outfile)
 
 
-do_averaging('Out/cpd_tdx_TC.tif', 'Out/cpd_tsx_TC.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg')
-cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Out/layover.tif', 'Fresh_Snow/fsd')
+#do_averaging('Out/cpd_tdx_TC.tif', 'Out/cpd_tsx_TC.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', True)
+cpd2freshsnow('Fresh_Snow/cpd_avg_gkernel.tif', 'Fresh_Snow/lia_avg.tif', 'Out/layover.tif', 'Fresh_Snow/fsd')
 #print('UNFILTERED IMAGE VALIDATION...')
 #validate_fresh_snow('Fresh_Snow/Out/fsd.tif', (700097.9845, 3581763.7627), 'val.csv')
-#filter_image('Fresh_Snow/Out/fsd.tif', 'Fresh_Snow/Out/fsd_flt')
+filter_image('Fresh_Snow/fsd_gkernel.tif', 'Fresh_Snow/fsd_flt_gkernel', (51, 51), False, 3)
 #print('FILTERED IMAGE VALIDATION...')
 #validate_fresh_snow('Fresh_Snow/Out/fsd_flt.tif', (700097.9845, 3581763.7627), 'val_flt.csv', 11)
 #gk = get_gaussian_kernel((21,11))
