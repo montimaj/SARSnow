@@ -53,6 +53,19 @@ def write_tif(arr, src_file, outfile='test', no_data_value=NO_DATA_VALUE):
     out.FlushCache()
 
 
+def generate_ndvi(red_band_file, nir_band_file, outfile):
+    red_band_file = gdal.Open(red_band_file)
+    nir_band_file = gdal.Open(nir_band_file)
+    red_band = red_band_file.GetRasterBand(1)
+    nir_band = nir_band_file.GetRasterBand(1)
+    red_arr = red_band.ReadAsArray().astype(np.float32)
+    nir_arr = nir_band.ReadAsArray().astype(np.float32)
+    red_arr[red_arr == red_band.GetNoDataValue()] = np.nan
+    nir_arr[nir_arr == nir_band.GetNoDataValue()] = np.nan
+    ndvi = (nir_arr - red_arr)/(nir_arr + red_arr)
+    write_tif(ndvi, red_band_file, outfile)
+
+
 def get_gaussian_kernel(ksize, nsig=3):
     interval = (2 * nsig + 1.) / ksize[0]
     x = np.linspace(-nsig - interval / 2., nsig + interval / 2., ksize[0] + 1)
@@ -114,21 +127,23 @@ def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_
     lia_tsx = cpd_file_tsx.GetRasterBand(3).ReadAsArray()
 
     print('ALL FILES LOADED... AVERAGING...')
-    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., gaussian_kernel)
+    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., gaussian_kernel=gaussian_kernel)
     lia_data = (lia_tdx + lia_tsx) / 2.
     print('Writing avg data...')
     write_tif(cpd_data, cpd_file_tdx, outfile_cpd)
     write_tif(lia_data, cpd_file_tdx, outfile_lia)
 
 
-def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, outfile, axial_ratio=2, shape='o'):
+def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, ndvi_file, outfile, axial_ratio=2, nsize=11, shape='o'):
     print('LOADING FILES ...')
     avg_cpd_file = gdal.Open(avg_cpd_file)
     avg_lia_file = gdal.Open(avg_lia_file)
     layover_file = gdal.Open(layover_file)
+    ndvi_file = gdal.Open(ndvi_file)
     cpd_data = avg_cpd_file.GetRasterBand(1).ReadAsArray()
     lia_data = avg_lia_file.GetRasterBand(1).ReadAsArray()
     layover_arr = layover_file.GetRasterBand(1).ReadAsArray()
+    ndvi_arr = ndvi_file.GetRasterBand(1).ReadAsArray()
 
     print('ALL FILES LOADED... CALCULATING PARAMETERS...')
     fvol = SNOW_DENSITY/ICE_DENSITY
@@ -142,23 +157,30 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, outfile, axial_ratio
     print('Mean incidence angle=', MEAN_INC_ANGLE)
     cpd_data = np.transpose(cpd_data)
     layover_arr = np.transpose(layover_arr)
+    ndvi_arr = np.transpose(ndvi_arr)
     lia_data = np.transpose(lia_data)
     fresh_sd = np.full_like(cpd_data, NO_DATA_VALUE, dtype=np.float32)
     for index, cpd in np.ndenumerate(cpd_data):
-        if layover_arr[index] == 0. and (cpd > 0 or (not np.isnan(cpd) and
-                                                     is_fresh_snow_neighborhood(cpd_data, index, 11))):
-            sin_inc_sq = np.sin(lia_data[index]) ** 2
-            effH = effx
-            effV = effy * np.cos(lia_data[index]) ** 2 + effz * sin_inc_sq
-            xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
-            if not np.isnan(xeta_diff) and xeta_diff != 0:
-                fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
-                if fresh_sd_val < 100:
-                    fresh_sd[index] = fresh_sd_val
-                    print('Effective permittivities=', str(effH), str(effV))
-                    print('Del Xeta=', str(xeta_diff))
-                    print('FSD=', fresh_sd[index])
-
+        if not np.isnan(cpd):
+            cpd_check = cpd > 0 or is_fresh_snow_neighborhood(cpd_data, index, nsize)
+            if layover_arr[index] == 0. and ndvi_arr[index] < 0.5 and cpd_check:
+                sin_inc_sq = np.sin(lia_data[index]) ** 2
+                effH = effx
+                effV = effy * np.cos(lia_data[index]) ** 2 + effz * sin_inc_sq
+                xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
+                if not np.isnan(xeta_diff) and xeta_diff != 0:
+                    fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
+                    if fresh_sd_val < 100:
+                        fresh_sd[index] = fresh_sd_val
+                        print('Effective permittivities=', str(effH), str(effV))
+                        print('Del Xeta=', str(xeta_diff))
+                        print('FSD=', fresh_sd[index])
+            elif layover_arr[index] != 0.:
+                fresh_sd[index] = -6666
+            elif ndvi_arr[index] >= 0.5:
+                fresh_sd[index] = -7777
+            else:
+                fresh_sd[index] = 0.
 
     print('WRITING UNFILTERED IMAGE...')
     write_tif(np.transpose(fresh_sd), avg_cpd_file, outfile)
@@ -192,13 +214,18 @@ def filter_image(image_file, outfile, wsize, gaussian_kernel=True, nsig=3):
     write_tif(flt_arr, image_file, outfile)
 
 
-#do_averaging('Out/cpd_tdx_TC.tif', 'Out/cpd_tsx_TC.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', True)
-cpd2freshsnow('Fresh_Snow/cpd_avg_gkernel.tif', 'Fresh_Snow/lia_avg.tif', 'Out/layover.tif', 'Fresh_Snow/fsd')
+do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False)
+cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Input/layover.tif', 'Input/NDVI_Mask.tif',
+              'Fresh_Snow/fsd_ng')
+filter_image('Fresh_Snow/fsd_new_ng.tif', 'Fresh_Snow/fsd_flt_ng', (51, 51), False, 3)
+
 #print('UNFILTERED IMAGE VALIDATION...')
 #validate_fresh_snow('Fresh_Snow/Out/fsd.tif', (700097.9845, 3581763.7627), 'val.csv')
-filter_image('Fresh_Snow/fsd_gkernel.tif', 'Fresh_Snow/fsd_flt_gkernel', (51, 51), False, 3)
+
 #print('FILTERED IMAGE VALIDATION...')
 #validate_fresh_snow('Fresh_Snow/Out/fsd_flt.tif', (700097.9845, 3581763.7627), 'val_flt.csv', 11)
-#gk = get_gaussian_kernel((21,11))
-#plt.imshow(gk, interpolation=None)
-#plt.show()
+# gk = get_gaussian_kernel((21,21), 15)
+# print(gk)
+# plt.imshow(gk, interpolation=None)
+# plt.show()
+#generate_ndvi('Bands/Red.tif', 'Bands/NIR.tif', 'Bands/NDVI_Landsat.tif')
