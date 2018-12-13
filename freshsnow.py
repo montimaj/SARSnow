@@ -125,7 +125,10 @@ def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_
     cpd_tsx = cpd_file_tsx.GetRasterBand(1).ReadAsArray()
     lia_tdx = cpd_file_tdx.GetRasterBand(3).ReadAsArray()
     lia_tsx = cpd_file_tsx.GetRasterBand(3).ReadAsArray()
-
+    cpd_tdx[cpd_tdx == NO_DATA_VALUE] = np.nan
+    cpd_tsx[cpd_tsx == NO_DATA_VALUE] = np.nan
+    lia_tdx[lia_tdx == NO_DATA_VALUE] = np.nan
+    lia_tsx[lia_tsx == NO_DATA_VALUE] = np.nan
     print('ALL FILES LOADED... AVERAGING...')
     cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., gaussian_kernel=gaussian_kernel)
     lia_data = (lia_tdx + lia_tsx) / 2.
@@ -134,16 +137,16 @@ def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_
     write_tif(lia_data, cpd_file_tdx, outfile_lia)
 
 
-def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, ndvi_file, outfile, axial_ratio=2, nsize=11, shape='o'):
+def cpd2freshsnow(avg_cpd_file, avg_lia_file, outfile, axial_ratio=2, nsize=11, shape='o'):
     print('LOADING FILES ...')
     avg_cpd_file = gdal.Open(avg_cpd_file)
     avg_lia_file = gdal.Open(avg_lia_file)
-    layover_file = gdal.Open(layover_file)
-    ndvi_file = gdal.Open(ndvi_file)
+    # layover_file = gdal.Open(layover_file)
+    # ndvi_file = gdal.Open(ndvi_file)
     cpd_data = avg_cpd_file.GetRasterBand(1).ReadAsArray()
     lia_data = avg_lia_file.GetRasterBand(1).ReadAsArray()
-    layover_arr = layover_file.GetRasterBand(1).ReadAsArray()
-    ndvi_arr = ndvi_file.GetRasterBand(1).ReadAsArray()
+    # layover_arr = layover_file.GetRasterBand(1).ReadAsArray()
+    # ndvi_arr = ndvi_file.GetRasterBand(1).ReadAsArray()
 
     print('ALL FILES LOADED... CALCULATING PARAMETERS...')
     fvol = SNOW_DENSITY/ICE_DENSITY
@@ -156,14 +159,13 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, ndvi_file, outfile, 
     print('PIXELWISE COMPUTATION STARTED...')
     print('Mean incidence angle=', MEAN_INC_ANGLE)
     cpd_data = np.transpose(cpd_data)
-    layover_arr = np.transpose(layover_arr)
-    ndvi_arr = np.transpose(ndvi_arr)
+    # layover_arr = np.transpose(layover_arr)
+    # ndvi_arr = np.transpose(ndvi_arr)
     lia_data = np.transpose(lia_data)
     fresh_sd = np.full_like(cpd_data, NO_DATA_VALUE, dtype=np.float32)
     for index, cpd in np.ndenumerate(cpd_data):
-        if not np.isnan(cpd):
-            cpd_check = cpd > 0 or is_fresh_snow_neighborhood(cpd_data, index, nsize)
-            if layover_arr[index] == 0. and ndvi_arr[index] < 0.5 and cpd_check:
+        if cpd != NO_DATA_VALUE:
+            if cpd > 0 or is_fresh_snow_neighborhood(cpd_data, index, nsize):
                 sin_inc_sq = np.sin(lia_data[index]) ** 2
                 effH = effx
                 effV = effy * np.cos(lia_data[index]) ** 2 + effz * sin_inc_sq
@@ -175,13 +177,8 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, layover_file, ndvi_file, outfile, 
                         print('Effective permittivities=', str(effH), str(effV))
                         print('Del Xeta=', str(xeta_diff))
                         print('FSD=', fresh_sd[index])
-            elif layover_arr[index] != 0.:
-                fresh_sd[index] = -6666
-            elif ndvi_arr[index] >= 0.5:
-                fresh_sd[index] = -7777
             else:
                 fresh_sd[index] = 0.
-
     print('WRITING UNFILTERED IMAGE...')
     write_tif(np.transpose(fresh_sd), avg_cpd_file, outfile)
 
@@ -214,10 +211,9 @@ def filter_image(image_file, outfile, wsize, gaussian_kernel=True, nsig=3):
     write_tif(flt_arr, image_file, outfile)
 
 
-do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False)
-cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Input/layover.tif', 'Input/NDVI_Mask.tif',
-              'Fresh_Snow/fsd_ng')
-filter_image('Fresh_Snow/fsd_new_ng.tif', 'Fresh_Snow/fsd_flt_ng', (51, 51), False, 3)
+#do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False)
+cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
+filter_image('Fresh_Snow/fsd_ng.tif', 'Fresh_Snow/fsd_flt_ng', (51, 51), False, 3)
 
 #print('UNFILTERED IMAGE VALIDATION...')
 #validate_fresh_snow('Fresh_Snow/Out/fsd.tif', (700097.9845, 3581763.7627), 'val.csv')
