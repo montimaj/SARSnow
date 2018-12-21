@@ -7,7 +7,7 @@ import scipy.stats as st
 EFF_AIR = 1.0005
 EFF_ICE = 3.179
 ICE_DENSITY = 0.917 # gm/cc
-SNOW_DENSITY = 0.13 # gm/cc FN = 0.12, AN = 0.14
+SNOW_DENSITY = 0.065 # gm/cc FN = 0.05, AN = 0.08
 WAVELENGTH = 3.10880853
 NO_DATA_VALUE = -32768
 MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
@@ -101,7 +101,7 @@ def is_fresh_snow_neighborhood(cpd_data, pos, size):
     return len(fs_neighbor[fs_neighbor > 0]) > 0
 
 
-def get_ensemble_avg(image_arr, wsize=(10, 10), gaussian_kernel=True, nsig=3):
+def get_ensemble_avg(image_arr, wsize, gaussian_kernel=True, nsig=3):
     print('PERFORMING ENSEMBLE AVERAGING...')
     emat = np.full_like(image_arr, NO_DATA_VALUE, dtype=np.float32)
     for index, value in np.ndenumerate(image_arr):
@@ -115,7 +115,7 @@ def get_ensemble_avg(image_arr, wsize=(10, 10), gaussian_kernel=True, nsig=3):
     return emat
 
 
-def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_kernel):
+def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_kernel, wsize=(2, 2)):
     print('LOADING FILES TO MEMORY...')
 
     cpd_file_tdx = gdal.Open(cpd_file_tdx)
@@ -129,7 +129,7 @@ def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_
     lia_tdx[lia_tdx == NO_DATA_VALUE] = np.nan
     lia_tsx[lia_tsx == NO_DATA_VALUE] = np.nan
     print('ALL FILES LOADED... AVERAGING...')
-    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., gaussian_kernel=gaussian_kernel)
+    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., wsize, gaussian_kernel=gaussian_kernel)
     lia_data = (lia_tdx + lia_tsx) / 2.
     print('Writing avg data...')
     write_tif(cpd_data, cpd_file_tdx, outfile_cpd)
@@ -164,7 +164,7 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, outfile, axial_ratio=2, nsize=11, 
                 xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
                 if not np.isnan(xeta_diff) and xeta_diff != 0:
                     fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
-                    if fresh_sd_val > 100:
+                    if fresh_sd_val > 500:
                         fresh_sd_val = 0
             fresh_sd_arr[index] = fresh_sd_val
             print('FSD=', index, fresh_sd_arr[index])
@@ -176,7 +176,7 @@ def get_image_stats(image_arr):
     return np.min(image_arr), np.max(image_arr), np.mean(image_arr), np.var(image_arr)
 
 
-def validate_fresh_snow(fsd_file, geocoords, validation_file, nsize=11):
+def validate_fresh_snow(fsd_file, geocoords, validation_file, nsize=(11, 11)):
     fsd_file = gdal.Open(fsd_file)
     #geocoords = utm.from_latlon(geocoords[0], geocoords[1])[:2]
     px, py = retrieve_pixel_coords(geocoords, fsd_file)
@@ -184,10 +184,10 @@ def validate_fresh_snow(fsd_file, geocoords, validation_file, nsize=11):
     print(fsd_arr.shape)
     print('IMAGE STATS...')
     print('STUDY AREA FRESH SNOW DEPTH (min, max, mean, var) = ', get_image_stats(fsd_arr[fsd_arr != NO_DATA_VALUE]))
-    fsd_dhundi = get_ensemble_window(fsd_arr, (py, px), (nsize, nsize))
+    fsd_dhundi = get_ensemble_window(fsd_arr, (py, px), nsize)
     np.savetxt(validation_file, fsd_dhundi)
     min_fsd, max_fsd, mean_fsd, var_fsd = get_image_stats(fsd_dhundi[fsd_dhundi != NO_DATA_VALUE])
-    max_pos = np.where(fsd_arr == max_fsd) # ground value = 2.3 cm
+    max_pos = np.where(fsd_arr == max_fsd) # ground value = 17-23 cm
     print('Pixels = ', (py, px), 'Max_pos = ', max_pos)
     print('DHUNDI FRESH SNOW DEPTH (min, max, mean, var) = ', min_fsd, max_fsd, mean_fsd, var_fsd)
 
@@ -201,13 +201,13 @@ def filter_image(image_file, outfile, wsize, gaussian_kernel=True, nsig=3):
     write_tif(flt_arr, image_file, outfile)
 
 
-#do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False)
-#cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
-#filter_image('Fresh_Snow/fsd_ng.tif', 'Fresh_Snow/fsd_flt_ng', (51, 51), False)
+#do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False, wsize=(10, 10))
+cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
+filter_image('Fresh_Snow/fsd_ng.tif', 'Fresh_Snow/fsd_flt_ng', (51, 51), False)
 
 
 #print('FILTERED IMAGE VALIDATION...')
-validate_fresh_snow('FSD/fsd_flt_ng_corr.tif', (700089.771, 3581794.5556), 'FSD/val_flt.csv', 10)
+validate_fresh_snow('FSD/fsd_flt_ng.tif', (700089.771, 3581794.5556), 'FSD/val_flt.csv', nsize=(1, 1))
 # gk = get_gaussian_kernel((21,21), 15)
 # print(gk)
 # plt.imshow(gk, interpolation=None)
