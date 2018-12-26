@@ -80,21 +80,21 @@ def validate_dry_snow(dsd_file, geocoords, nsize=(11, 11)):
     print('DHUNDI FRESH SNOW DEPTH (min, max, mean, var) = ', min_fsd, max_fsd, mean_dsd, var_fsd)
 
 
-# input_image = gdal.Open('dsd_data.tif')
-# unw_phase = input_image.GetRasterBand(1).ReadAsArray()
-# lia_data = input_image.GetRasterBand(2).ReadAsArray()
-# #print('Filtering unwrapped phase...')
-# #write_tif(unw_phase, input_image, 'unw_flt')
-#
-# #unw_image = gdal.Open('unw_flt.tif')
-# #unw_phase = unw_image.GetRasterBand(1).ReadAsArray()
-# epsilon_snow = 1 + 1.5995 * MEAN_DENSITY + 1.861 * MEAN_DENSITY ** 3
-# del_eta = np.cos(lia_data) - np.sqrt(epsilon_snow - np.sin(lia_data) ** 2)
-# dry_snow_arr = np.abs(C_BAND_WAVELENGTH * unw_phase / (4 * np.pi * del_eta))
-# print('Filtering dry snow depth...')
-# dry_snow_flt = filter_image(dry_snow_arr, (51, 51))
-# write_tif(dry_snow_flt, input_image, 'dry_snow_depth')
+input_image = gdal.Open('dsd_data.tif')
+unw_phase = input_image.GetRasterBand(1).ReadAsArray()
+lia_data = input_image.GetRasterBand(2).ReadAsArray()
+#print('Filtering unwrapped phase...')
+#write_tif(unw_phase, input_image, 'unw_flt')
+
+#unw_image = gdal.Open('unw_flt.tif')
+#unw_phase = unw_image.GetRasterBand(1).ReadAsArray()
+epsilon_snow = 1 + 1.5995 * MEAN_DENSITY + 1.861 * MEAN_DENSITY ** 3
+del_eta = np.cos(lia_data) - np.sqrt(epsilon_snow - np.sin(lia_data) ** 2)
+dry_snow_arr = np.abs(C_BAND_WAVELENGTH * unw_phase / (4 * np.pi * del_eta))
+print('Filtering dry snow depth...')
+dry_snow_flt = filter_image(dry_snow_arr, (51, 51))
+write_tif(dry_snow_flt, input_image, 'new_dry_snow_depth')
 # #dry_snow_flt = filter_image(dry_snow_arr, (1, 1))
 # #write_tif(dry_snow_flt, input_image, 'dry_snow_depth_sw_1')
 
-validate_dry_snow('dry_snow_depth.tif', (700089.771, 3581794.5556), (11, 11))
+validate_dry_snow('new_dry_snow_depth.tif', (700089.771, 3581794.5556), (1, 1))
