@@ -220,7 +220,7 @@ def do_validation(window_type='s', range_min=21, range_max=151, step_size=10.0, 
         outdir += 'Rect'
     print(windows)
     for window in windows:
-        k1, k2 = str(window[0]), str(window[1])
+        k1, k2 = str(int(window[0])), str(int(window[1]))
         outfile = outdir + '/fsd_flt_' + k1 + '_' + k2
         window = int(window[0] / 2.), int(window[1] / 2.)
         filter_image('Fresh_Snow/fsd_ng.tif', outfile, window, verbose=False)
@@ -230,11 +230,30 @@ def do_validation(window_type='s', range_min=21, range_max=151, step_size=10.0, 
     validation_file.close()
 
 
-do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False, wsize=(10, 10))
-cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
-#do_validation()
-do_validation('r', step_size=1.19)
+def get_wishart_class_stats(input_wishart, layover_file):
+    print('File: ', input_wishart)
+    input_wishart = gdal.Open(input_wishart)
+    layover_file = gdal.Open(layover_file)
+    wishart_arr = input_wishart.GetRasterBand(1).ReadAsArray()
+    layover_arr = layover_file.GetRasterBand(1).ReadAsArray()
+    new_arr = np.full_like(wishart_arr, NO_DATA_VALUE, dtype=np.int32)
+    print('Checking valid pixels...')
+    for index, value in np.ndenumerate(wishart_arr):
+        if value != 0 and layover_arr[index] == 0:
+            new_arr[index] = int(round(value))
+    classes, count = np.unique(new_arr, return_counts=True)
+    total_pixels = np.sum(count)
+    print('Total pixels=', total_pixels)
+    class_percent = np.float32(count * 100. / total_pixels)
+    print(classes, class_percent)
 
+
+#do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False, wsize=(10, 10))
+#cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
+#do_validation()
+#do_validation('r', step_size=1.19)
+get_wishart_class_stats('Wishart_Analysis/Jan.tif', 'Wishart_Analysis/layover.tif')
+get_wishart_class_stats('Wishart_Analysis/Jun.tif', 'Wishart_Analysis/layover.tif')
 #print('FILTERED IMAGE VALIDATION...')
 # gk = get_gaussian_kernel((21,21), 15)
 # print(gk)
