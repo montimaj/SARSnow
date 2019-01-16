@@ -159,9 +159,10 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, outfile, axial_ratio=2, nsize=11, 
         if cpd != NO_DATA_VALUE:
             fresh_sd_val = 0
             if cpd > 0:
-                sin_inc_sq = np.sin(lia_data[index]) ** 2
+                lia_val = np.deg2rad(lia_data[index])
+                sin_inc_sq = np.sin(lia_val) ** 2
                 effH = effx
-                effV = effy * np.cos(lia_data[index]) ** 2 + effz * sin_inc_sq
+                effV = effy * np.cos(lia_val) ** 2 + effz * sin_inc_sq
                 xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
                 if not np.isnan(xeta_diff) and xeta_diff != 0:
                     fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
