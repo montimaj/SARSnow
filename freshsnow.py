@@ -167,7 +167,7 @@ def cpd2freshsnow(avg_cpd_file, avg_lia_file, outfile, axial_ratio=2, nsize=11, 
                 if not np.isnan(xeta_diff) and xeta_diff != 0:
                     fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
                     if fresh_sd_val > 500:
-                        fresh_sd_val = 0
+                        fresh_sd_val = 500
             fresh_sd_arr[index] = fresh_sd_val
             if verbose:
                 print('FSD=', index, fresh_sd_arr[index])
@@ -249,12 +249,12 @@ def get_wishart_class_stats(input_wishart, layover_file):
     print(classes, class_percent)
 
 
-#do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False, wsize=(10, 10))
-#cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
-#do_validation()
+do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False, wsize=(2, 2))
+cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
+do_validation(range_min=65, range_max=65)
 #do_validation('r', step_size=1.19)
-get_wishart_class_stats('Wishart_Analysis/Jan.tif', 'Wishart_Analysis/layover.tif')
-get_wishart_class_stats('Wishart_Analysis/Jun.tif', 'Wishart_Analysis/layover.tif')
+#get_wishart_class_stats('Wishart_Analysis/Jan.tif', 'Wishart_Analysis/layover.tif')
+#get_wishart_class_stats('Wishart_Analysis/Jun.tif', 'Wishart_Analysis/layover.tif')
 #print('FILTERED IMAGE VALIDATION...')
 # gk = get_gaussian_kernel((21,21), 15)
 # print(gk)
