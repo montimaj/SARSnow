@@ -184,7 +184,7 @@ def validate_fresh_snow(fsd_file, geocoords, validation_file, nsize=(1, 1)):
     #geocoords = utm.from_latlon(geocoords[0], geocoords[1])[:2]
     px, py = retrieve_pixel_coords(geocoords, fsd_file)
     fsd_arr = fsd_file.GetRasterBand(1).ReadAsArray()
-    fsd_dhundi = get_ensemble_window(fsd_arr, (py, px), nsize)
+    fsd_dhundi = get_ensemble_window(fsd_arr, (px, py), nsize)
     min_fsd, max_fsd, mean_fsd, sd_fsd = get_image_stats(fsd_dhundi[fsd_dhundi != NO_DATA_VALUE])
     print(min_fsd, max_fsd, mean_fsd, sd_fsd)
     out = str(min_fsd) + ',' + str(max_fsd) + ',' + str(mean_fsd) + ',' + str(sd_fsd) + '\n'
