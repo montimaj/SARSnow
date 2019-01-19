@@ -1,4 +1,4 @@
-# SnowSAR
+# SARSnow
 Thesis Codes
 
 Fresh snow depth map and histogram for Jan 8, 2016
