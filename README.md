@@ -1,4 +1,7 @@
 # SnowSAR
-Doris Cards
+Thesis Codes
 
-Thesis Codes have been moved to a private repo and would be made public after it is published
+Fresh snow depth map and histogram for Jan 8, 2016
+
+![Alt text](./Maps/fsd_map.png?raw=true "Fresh Snow Depth")
+![Alt text](./Maps/fsd_hist.png?raw=true "Histogram")
