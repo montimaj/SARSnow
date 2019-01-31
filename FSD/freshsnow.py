@@ -1,8 +1,8 @@
-from osgeo import gdal
+import gdal
 import numpy as np
 import affine
-import scipy.stats as st
-#import matplotlib.pyplot as plt
+import os
+import glob
 
 EFF_AIR = 1.0005
 EFF_ICE = 3.179
@@ -10,10 +10,151 @@ ICE_DENSITY = 0.917 # gm/cc
 SNOW_DENSITY = 0.06 # gm/cc
 WAVELENGTH = 3.10880853
 NO_DATA_VALUE = -32768
-#MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
+MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
+
+
+def read_images(path, imgformat='*.tif'):
+    """
+    Read images in a directory
+    :param path: Directory path
+    :param imgformat: Type of image file
+    :return: Dictionary of GDAL Opened references/ pointers to specific files
+    """
+    print("Reading images...")
+    images = {}
+    files = os.path.join(path, imgformat)
+    for file in glob.glob(files):
+        key = file[file.rfind('/') + 1: file.rfind('.')]
+        images[key] = gdal.Open(file)
+    print("Finished reading")
+    return images
+
+
+def get_complex_image(img_file, is_dual=False):
+    """
+    Read complex image stored either in four bands or two separate bands and set nan values accordingly
+    :param img_file: GDAL reference file
+    :param is_dual: True if image file is stored in two separate bands
+    :return: If dual is set true, a complex numpy array is returned, numpy array tuple otherwise
+    """
+    mst = img_file.GetRasterBand(1).ReadAsArray() + img_file.GetRasterBand(2).ReadAsArray() * 1j
+    mst[mst == np.complex(NO_DATA_VALUE, NO_DATA_VALUE)] = np.nan
+    if not is_dual:
+        slv = img_file.GetRasterBand(3).ReadAsArray() + img_file.GetRasterBand(4).ReadAsArray() * 1j
+        slv[slv == np.complex(NO_DATA_VALUE, NO_DATA_VALUE)] = np.nan
+        return mst, slv
+    return mst
+
+
+def get_image_array(img_file):
+    """
+    Read real numpy arrays from file
+    :param img_file: GDAL reference file
+    :return: Numpy array with nan set accordingly
+    """
+    arr = img_file.GetRasterBand(1).ReadAsArray()
+    arr[arr == NO_DATA_VALUE] = np.nan
+    return arr
+
+
+def set_nan_img(img_arr, layover_file, forest_file):
+    """
+    Set nan values to specific images using layover and forest masks
+    :param img_arr: Image array whose nan values are to be set
+    :param layover_file: Layover file, no layover marked with 0
+    :param forest_file: Forest file, forest marked with 0
+    :return: Nan set array
+    """
+    layover = get_image_array(layover_file)
+    forest = get_image_array(forest_file)
+    for idx, lval in np.ndenumerate(layover):
+        if np.round(lval) != 0 or forest[idx] == 0:
+            img_arr[idx] = np.nan
+    return img_arr
+
+
+def nanfix_tmat_val(tmat, idx, verbose=True):
+    """
+    Fix nan value occuring due to incorrect terrain correction
+    :param tmat: Complex coherency matrix
+    :param idx: Index at which the nan value is to be replaced by the mean of its neighbourhood
+    :param verbose: Set true for detailed logs
+    :return: Corrected element
+    """
+
+    i = 1
+    while True:
+        window = get_ensemble_window(tmat, idx, (i, i))
+        tval = np.nanmean(window)
+        if verbose:
+            print('\nTVAL nanfix', i, np.abs(tval))
+        if not np.isnan(tval):
+            return tval
+        i += 1
+
+
+def nanfix_tmat_arr(tmat_arr, lia_arr, layover_arr=None, forest_arr=None, apply_masks=True, verbose=False):
+    """
+    Fix nan values occuring due to incorrect terrain correction
+    :param tmat_arr: Complex coherency matrix
+    :param lia_arr: Local incidence angle array or any coregistered image array having non-nan values
+    in the area of interest
+    :param layover_arr: Layover array, no layover marked with 0
+    :param forest_arr: Forest array, forest marked with 0
+    :param apply_masks: Set true for applying layover and forest masks
+    :param verbose: Set true for detailed logs
+    :return:
+    """
+
+    for idx, tval in np.ndenumerate(tmat_arr):
+        if not np.isnan(lia_arr[idx]):
+            if np.isnan(tval):
+                if apply_masks:
+                    if np.round(layover_arr[idx]) == 0 and forest_arr[idx] == 1:
+                        tmat_arr[idx] = nanfix_tmat_val(tmat_arr, idx, verbose)
+                else:
+                    tmat_arr[idx] = nanfix_tmat_val(tmat_arr, idx, verbose)
+    return tmat_arr
+
+
+def write_file(arr, src_file, outfile='test', no_data_value=NO_DATA_VALUE, is_complex=True):
+    """
+    Write image files in TIF format
+    :param arr: Image array to write
+    :param src_file: Original image file for retrieving affine transformation parameters
+    :param outfile: Output file path
+    :param no_data_value: No data value to be set
+    :param is_complex: If true, write complex image array in two separate bands
+    :return: None
+    """
+
+    driver = gdal.GetDriverByName("GTiff")
+    if is_complex:
+        out = driver.Create(outfile + ".tif", arr.shape[1], arr.shape[0], 2, gdal.GDT_Float32)
+    else:
+        out = driver.Create(outfile + ".tif", arr.shape[1], arr.shape[0], 1, gdal.GDT_Float32)
+    out.SetProjection(src_file.GetProjection())
+    out.SetGeoTransform(src_file.GetGeoTransform())
+    out.GetRasterBand(1).SetNoDataValue(no_data_value)
+    if is_complex:
+        arr[np.isnan(arr)] = no_data_value + no_data_value * 1j
+        out.GetRasterBand(2).SetNoDataValue(no_data_value)
+        out.GetRasterBand(1).WriteArray(arr.real)
+        out.GetRasterBand(2).WriteArray(arr.imag)
+    else:
+        arr[np.isnan(arr)] = no_data_value
+        out.GetRasterBand(1).WriteArray(arr)
+    out.FlushCache()
 
 
 def get_depolarisation_factor(axial_ratio, shape):
+    """
+    Calculation three depolarisation factors
+    :param axial_ratio: Axial ratio
+    :param shape: Particle shape to consider
+    :return: Tuple containing three depolarisation factors in x, y, and z directions
+    """
+
     depolarisation_factorx = depolarisation_factory = depolarisation_factorz = 1/3.
     if shape == 'o':
         eccentricity = np.sqrt(axial_ratio ** 2 - 1)
@@ -29,12 +170,27 @@ def get_depolarisation_factor(axial_ratio, shape):
 
 
 def get_effective_permittivity(fvol, depolarisation_factor):
+    """
+    Calculate effective permittivity
+    :param fvol: Snow volume fraction
+    :param depolarisation_factor: Depolarisation factor
+    :return: Effective permittivity
+    """
+
     eff_diff = EFF_ICE - EFF_AIR
     eff = EFF_AIR * (1 + fvol * eff_diff/(EFF_AIR + (1 - fvol) * depolarisation_factor * eff_diff))
     return eff
 
 
 def retrieve_pixel_coords(geo_coord, data_source):
+    """
+    Get pixels coordinates from geo-coordinates
+    :param geo_coord: Geo-cooridnate tuple
+    :param data_source: Original GDAL reference having affine transformation parameters
+    :return: Pixel coordinates in x and y direction (should be reversed in the caller function to get the actual pixel
+    position)
+    """
+
     x, y = geo_coord[0], geo_coord[1]
     forward_transform = affine.Affine.from_gdal(*data_source.GetGeoTransform())
     reverse_transform = ~forward_transform
@@ -43,42 +199,33 @@ def retrieve_pixel_coords(geo_coord, data_source):
     return px, py
 
 
-def write_tif(arr, src_file, outfile='test', no_data_value=NO_DATA_VALUE):
-    driver = gdal.GetDriverByName("GTiff")
-    out = driver.Create(outfile + '.tif', arr.shape[1], arr.shape[0], 1, gdal.GDT_Float32)
-    out.SetProjection(src_file.GetProjection())
-    out.SetGeoTransform(src_file.GetGeoTransform())
-    out.GetRasterBand(1).SetNoDataValue(no_data_value)
-    out.GetRasterBand(1).WriteArray(arr)
-    out.FlushCache()
+def check_values(img_arr, img_file, geocoords, nsize=(1, 1), is_complex=False):
+    """
+    Validate results
+    :param img_arr: Image array to validate
+    :param img_file: Original GDAL reference having affine transformation parameters
+    :param geocoords: Geo-coordinates in tuple format
+    :param nsize: Validation window size (should be half of the desired window size)
+    :param is_complex: Set true for complex images such as the coherency image
+    :return: Min, max, mean and standard deviation as tuple
+    """
 
-
-def generate_ndvi(red_band_file, nir_band_file, outfile):
-    red_band_file = gdal.Open(red_band_file)
-    nir_band_file = gdal.Open(nir_band_file)
-    red_band = red_band_file.GetRasterBand(1)
-    nir_band = nir_band_file.GetRasterBand(1)
-    red_arr = red_band.ReadAsArray().astype(np.float32)
-    nir_arr = nir_band.ReadAsArray().astype(np.float32)
-    red_arr[red_arr == red_band.GetNoDataValue()] = np.nan
-    nir_arr[nir_arr == nir_band.GetNoDataValue()] = np.nan
-    ndvi = (nir_arr - red_arr)/(nir_arr + red_arr)
-    write_tif(ndvi, red_band_file, outfile)
-
-
-def get_gaussian_kernel(ksize, nsig=3):
-    interval = (2 * nsig + 1.) / ksize[0]
-    x = np.linspace(-nsig - interval / 2., nsig + interval / 2., ksize[0] + 1)
-    interval = (2 * nsig + 1.) / ksize[1]
-    y = np.linspace(-nsig - interval / 2., nsig + interval / 2., ksize[1] + 1)
-    k1 = np.diff(st.norm.cdf(x))
-    k2 = np.diff(st.norm.cdf(y))
-    kernel_raw = np.sqrt(np.outer(k1, k2))
-    kernel = kernel_raw / kernel_raw.sum()
-    return kernel
+    px, py = retrieve_pixel_coords(geocoords, img_file)
+    if is_complex:
+        img_arr = np.abs(img_arr)
+    img_loc = get_ensemble_window(img_arr, (py, px), nsize)
+    return np.nanmin(img_loc), np.nanmax(img_loc), np.nanmean(img_loc), np.nanstd(img_loc)
 
 
 def get_ensemble_window(image_arr, index, wsize):
+    """
+    Subset image array based on the window size
+    :param image_arr: Image array whose subset is to be returned
+    :param index: Central subset index
+    :param wsize: Ensemble window size (should be half of desired window size)
+    :return: Subset array
+    """
+
     startx = index[0] - wsize[0]
     starty = index[1] - wsize[1]
     if startx < 0:
@@ -95,143 +242,183 @@ def get_ensemble_window(image_arr, index, wsize):
     return image_arr[startx: endx, starty: endy]
 
 
-def is_fresh_snow_neighborhood(cpd_data, pos, size):
-    size = int(size / 2), int(size / 2)
-    fs_neighbor = get_ensemble_window(cpd_data, pos, size)
-    return len(fs_neighbor[fs_neighbor > 0]) > 0
+def get_ensemble_avg(image_arr, wsize, image_file, outfile, stat='mean', verbose=True, wf=False, is_complex=False):
+    """
+    Perform Ensemble Filtering based on mean, median or maximum
+    :param image_arr: Image array to filter
+    :param wsize: Ensemble window size (should be half of desired window size)
+    :param image_file: Original GDAL reference for writing output image
+    :param outfile: Outfile file path
+    :param stat: Statistics to use while ensemble filtering (mean, med, max)
+    :param verbose: Set true for detailed logs
+    :param wf: Set true to save intermediate results
+    :param is_complex: Set true for averaging complex numbers
+    :return: Ensemble filtered array
+    """
 
-
-def get_ensemble_avg(image_arr, wsize, gaussian_kernel=False, nsig=3, verbose=True):
-    print('PERFORMING ENSEMBLE AVERAGING...')
-    emat = np.full_like(image_arr, NO_DATA_VALUE, dtype=np.float32)
+    dt = np.float32
+    if is_complex:
+        dt = np.complex
+    emat = np.full_like(image_arr, np.nan, dtype=dt)
     for index, value in np.ndenumerate(image_arr):
         if not np.isnan(value):
             ensemble_window = get_ensemble_window(image_arr, index, wsize)
-            if gaussian_kernel:
-                gkernel = get_gaussian_kernel(ensemble_window.shape, nsig)
-                ensemble_window *= gkernel
-            emat[index] = np.mean(ensemble_window[~np.isnan(ensemble_window)])
+            if stat == 'mean':
+                emat[index] = np.nanmean(ensemble_window)
+            elif stat == 'med':
+                emat[index] = np.nanmedian(ensemble_window)
+            elif stat == 'max':
+                emat[index] = np.nanmax(ensemble_window)
             if verbose:
                 print(index, emat[index])
+    if wf:
+        outfile = 'Out/' + outfile
+        np.save(outfile, emat)
+        write_file(emat.copy(), image_file, outfile, is_complex=is_complex)
     return emat
 
 
-def do_averaging(cpd_file_tdx, cpd_file_tsx, outfile_cpd, outfile_lia, gaussian_kernel=False, wsize=(2, 2)):
-    print('LOADING FILES TO MEMORY...')
+def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_masks=True, verbose=True, wf=False):
+    """
+    Calculate complex coherency matrix based on ensemble averaging
+    :param s_hh: HH array
+    :param s_vv: VV array
+    :param img_dict: Image dictionary containing GDAL references
+    :param outfile: Output file path
+    :param wsize: Ensemble window size (should be half of desired window size)
+    :param apply_masks: Set true for applying layover and forest masks
+    :param verbose: Set true for detailed logs
+    :param wf: Set true to save intermediate results
+    :return: Nan fixed complex coherency matrix
+    """
 
-    cpd_file_tdx = gdal.Open(cpd_file_tdx)
-    cpd_file_tsx = gdal.Open(cpd_file_tsx)
-    cpd_tdx = cpd_file_tdx.GetRasterBand(1).ReadAsArray()
-    cpd_tsx = cpd_file_tsx.GetRasterBand(1).ReadAsArray()
-    lia_tdx = cpd_file_tdx.GetRasterBand(3).ReadAsArray()
-    lia_tsx = cpd_file_tsx.GetRasterBand(3).ReadAsArray()
-    cpd_tdx[cpd_tdx == NO_DATA_VALUE] = np.nan
-    cpd_tsx[cpd_tsx == NO_DATA_VALUE] = np.nan
-    lia_tdx[lia_tdx == NO_DATA_VALUE] = np.nan
-    lia_tsx[lia_tsx == NO_DATA_VALUE] = np.nan
-    print('ALL FILES LOADED... AVERAGING...')
-    cpd_data = get_ensemble_avg((cpd_tdx + cpd_tsx) / 2., wsize, gaussian_kernel=gaussian_kernel)
-    lia_data = (lia_tdx + lia_tsx) / 2.
-    print('Writing avg data...')
-    write_tif(cpd_data, cpd_file_tdx, outfile_cpd)
-    write_tif(lia_data, cpd_file_tdx, outfile_lia)
+    lia_file = img_dict['LIA']
+    num = get_ensemble_avg(s_vv * np.conj(s_hh), wsize=wsize, image_file=lia_file, outfile='Num', is_complex=True,
+                           verbose=verbose, wf=False)
+    d1 = get_ensemble_avg((s_vv * np.conj(s_vv)).real, wsize=wsize, image_file=lia_file, outfile='D1',
+                          verbose=verbose, wf=False)
+    d2 = get_ensemble_avg((s_hh * np.conj(s_hh)).real, wsize=wsize, image_file=lia_file, outfile='D2',
+                          verbose=verbose, wf=False)
 
+    tmat = num / (np.sqrt(d1 * d2))
+    tmat[tmat > 1] = 1 + 0j
 
-def cpd2freshsnow(avg_cpd_file, avg_lia_file, outfile, axial_ratio=2, nsize=11, shape='o', verbose=True):
-    print('LOADING FILES ...')
-    avg_cpd_file = gdal.Open(avg_cpd_file)
-    avg_lia_file = gdal.Open(avg_lia_file)
-    cpd_data = avg_cpd_file.GetRasterBand(1).ReadAsArray()
-    lia_data = avg_lia_file.GetRasterBand(1).ReadAsArray()
-
-    print('ALL FILES LOADED... CALCULATING PARAMETERS...')
-    fvol = SNOW_DENSITY/ICE_DENSITY
-    depolarisation_factors = get_depolarisation_factor(axial_ratio, shape)
-    print('DEPOLARISATION FACTORS = ', depolarisation_factors)
-    effx = get_effective_permittivity(fvol, depolarisation_factors[0])
-    effy = get_effective_permittivity(fvol, depolarisation_factors[1])
-    effz = get_effective_permittivity(fvol, depolarisation_factors[2])
-
-    print('PIXELWISE COMPUTATION STARTED...')
-    #print('Mean incidence angle=', MEAN_INC_ANGLE)
-    fresh_sd_arr = np.full_like(cpd_data, NO_DATA_VALUE, dtype=np.float32)
-    for index, cpd in np.ndenumerate(cpd_data):
-        if cpd != NO_DATA_VALUE:
-            fresh_sd_val = 0
-            if cpd > 0:
-                lia_val = np.deg2rad(lia_data[index])
-                sin_inc_sq = np.sin(lia_val) ** 2
-                effH = effx
-                effV = effy * np.cos(lia_val) ** 2 + effz * sin_inc_sq
-                xeta_diff = np.sqrt(effV - sin_inc_sq) - np.sqrt(effH - sin_inc_sq)
-                if not np.isnan(xeta_diff) and xeta_diff != 0:
-                    fresh_sd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
-                    if fresh_sd_val > 500:
-                        fresh_sd_val = 500
-            fresh_sd_arr[index] = fresh_sd_val
-            if verbose:
-                print('FSD=', index, fresh_sd_arr[index])
-    print('WRITING UNFILTERED IMAGE...')
-    write_tif(fresh_sd_arr, avg_cpd_file, outfile)
-
-
-def get_image_stats(image_arr):
-    return np.min(image_arr), np.max(image_arr), np.mean(image_arr), np.std(image_arr)
-
-
-def validate_fresh_snow(fsd_file, geocoords, validation_file, nsize=(1, 1)):
-    fsd_file = gdal.Open(fsd_file)
-    #geocoords = utm.from_latlon(geocoords[0], geocoords[1])[:2]
-    px, py = retrieve_pixel_coords(geocoords, fsd_file)
-    fsd_arr = fsd_file.GetRasterBand(1).ReadAsArray()
-    fsd_dhundi = get_ensemble_window(fsd_arr, (py, px), nsize)
-    min_fsd, max_fsd, mean_fsd, sd_fsd = get_image_stats(fsd_dhundi[fsd_dhundi != NO_DATA_VALUE])
-    print(min_fsd, max_fsd, mean_fsd, sd_fsd)
-    out = str(min_fsd) + ',' + str(max_fsd) + ',' + str(mean_fsd) + ',' + str(sd_fsd) + '\n'
-    validation_file.write(out)
-
-
-def filter_image(image_file, outfile, wsize, gaussian_kernel=False, nsig=3, verbose=True):
-    image_file = gdal.Open(image_file)
-    img_arr = image_file.GetRasterBand(1).ReadAsArray()
-    img_arr[img_arr == NO_DATA_VALUE] = np.nan
-    print('\nWRITING FILTERED IMAGE ' + str(wsize[0]) + ' ' + str(wsize[1]) + '...')
-    flt_arr = get_ensemble_avg(img_arr, wsize, gaussian_kernel, nsig, verbose)
-    write_tif(flt_arr, image_file, outfile)
-
-
-def do_validation(window_type='s', range_min=21, range_max=151, step_size=10.0, tot_windows=10, nsize=(1, 1), outdir='Fresh_Snow/'):
-    validation_file = open('Fresh_Snow/val_flt_' + window_type + '.csv', 'a+')
-    validation_file.write('window,min,max,mean,sd\n')
-    windows = []
-    if window_type == 's' or step_size == 1:
-        sq_range = range(range_min, range_max + 1, int(step_size))
-        windows = [(int(round(i)), int(round(j))) for i, j in zip(sq_range, sq_range)]
-        windows=windows[:tot_windows]
-        outdir += 'Square'
+    lia_arr = get_image_array(lia_file)
+    if apply_masks:
+        layover_arr = get_image_array(img_dict['LAYOVER'])
+        forest_arr = get_image_array(img_dict['FOREST'])
+        tmat = nanfix_tmat_arr(tmat, lia_arr, layover_arr, forest_arr)
     else:
-        i = range_min
-        while len(windows) < tot_windows:
-            j = i * step_size
-            j = int(round(j))
-            if j % 2 == 0:
-                j += 1
-            windows.append((int(round(i)), j))
-            i = j
-        outdir += 'Rect'
-    print(windows)
-    for window in windows:
-        k1, k2 = str(int(window[0])), str(int(window[1]))
-        outfile = outdir + '/fsd_flt_' + k1 + '_' + k2
-        window = int(window[0] / 2.), int(window[1] / 2.)
-        filter_image('Fresh_Snow/fsd_ng.tif', outfile, window, verbose=False)
-        validation_file.write('(' + k1 + ',' + k2 + '),')
-        validate_fresh_snow(outfile + '.tif', (700089.771, 3581794.5556), validation_file, nsize=nsize)
-        print('Validation data written...')
-    validation_file.close()
+        tmat = nanfix_tmat_arr(tmat, lia_arr, apply_masks=False)
+    if wf:
+        np.save('Out/Coherence_Ensemble_' + outfile, tmat)
+        write_file(tmat.copy(), lia_file, 'Out/Coherence_Ensemble_' + outfile)
+    return tmat
+
+
+def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False):
+    """
+    Calculate copolar phase difference from complex coherency matrix
+    :param image_dict: Image dictionary containing GDAL references
+    :param wsize: Ensemble window size (should be half of the desired window)
+    :param apply_masks: Set true to apply layover and forest masks
+    :param verbose: Set true for log details
+    :param wf: Set true to save intermediate files
+    :param load_files: Set true to load existing numpy binary files and skip computation
+    :return: Tuple containing averaged CPD array and real coherence array
+    """
+    if not load_files:
+        hh_file = image_dict['HH']
+        vv_file = image_dict['VV']
+        lia_file = image_dict['LIA']
+        layover_file = image_dict['LAYOVER']
+        forest_file = image_dict['FOREST']
+
+        hh_mst, hh_slv = get_complex_image(hh_file)
+        vv_mst, vv_slv = get_complex_image(vv_file)
+
+        hh_mst = set_nan_img(hh_mst, layover_file, forest_file)
+        hh_slv = set_nan_img(hh_slv, layover_file, forest_file)
+        vv_mst = set_nan_img(vv_mst, layover_file, forest_file)
+        vv_slv = set_nan_img(vv_slv, layover_file, forest_file)
+
+        coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                           verbose=verbose, outfile='HH', wf=False)
+        coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                           verbose=verbose, outfile='VV', wf=False)
+        cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
+        cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
+        cpd_avg = (cpd_mst + cpd_slv) / 2.
+        coh_avg = np.abs((coh_mat_mst + coh_mat_slv) / 2)
+
+        lia_arr = get_image_array(lia_file)
+        if apply_masks:
+            layover_arr = get_image_array(layover_file)
+            forest_arr = get_image_array(forest_file)
+            cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, layover_arr, forest_arr)
+        else:
+            cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, apply_masks=False)
+        if wf:
+            np.save('Out/CPD_Avg', cpd_avg)
+            np.save('Out/Coh_Avg', coh_avg)
+    else:
+        cpd_avg = np.load('Out/CPD_Avg.npy')
+        coh_avg = np.load('Out/Coh_Avg.npy')
+    return cpd_avg, coh_avg
+
+
+def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shape='o', verbose=True,
+                  wf=True, load_file=False):
+    """
+    Compute fresh snow depth from CPD
+    :param cpd_arr: CPD array
+    :param lia_file: Local incidence angle GDAL reference
+    :param coh_arr: Real valued coherence array
+    :param coh_threshold: Coherence threshold
+    :param axial_ratio: Axial ratio
+    :param shape: Shape of snow particle
+    :param verbose: Set true for log details
+    :param wf: Set true to write intermediate files
+    :param load_file: Set true to load existing FSD numpy binary and skip computation
+    :return: Fresh snow depth array
+    """
+    if not load_file:
+        fvol = SNOW_DENSITY/ICE_DENSITY
+        depolarisation_factors = get_depolarisation_factor(axial_ratio, shape)
+        eff_h = get_effective_permittivity(fvol, depolarisation_factors[0])
+        eff_y = get_effective_permittivity(fvol, depolarisation_factors[1])
+        eff_z = get_effective_permittivity(fvol, depolarisation_factors[2])
+
+        lia_arr = np.deg2rad(get_image_array(lia_file))
+        fsd_arr = np.full_like(cpd_arr, np.nan, dtype=np.float32)
+        for index, cpd in np.ndenumerate(cpd_arr):
+            if not np.isnan(cpd):
+                fsd_val = 0
+                if cpd > 0 and coh_arr[index] > coh_threshold:
+                    lia_val = lia_arr[index]
+                    sin_inc_sq = np.sin(lia_val) ** 2
+                    eff_v = eff_y * np.cos(lia_val) ** 2 + eff_z * sin_inc_sq
+                    xeta_diff = np.sqrt(eff_v - sin_inc_sq) - np.sqrt(eff_h - sin_inc_sq)
+                    if xeta_diff < 0:
+                        fsd_val = np.float32(-cpd * WAVELENGTH / (4 * np.pi * xeta_diff))
+                fsd_arr[index] = fsd_val
+                if verbose:
+                    print('FSD=', index, fsd_val)
+        if wf:
+            np.save('Out/FSD_Unf', fsd_arr)
+    else:
+        fsd_arr = np.load('Out/FSD_Unf.npy')
+    return fsd_arr
 
 
 def get_wishart_class_stats(input_wishart, layover_file):
+    """
+    Calculate Wishart class percentages
+    :param input_wishart: Wishart classified image path
+    :param layover_file: Layover file path
+    :return: None
+    """
+
     print('File: ', input_wishart)
     input_wishart = gdal.Open(input_wishart)
     layover_file = gdal.Open(layover_file)
@@ -249,16 +436,50 @@ def get_wishart_class_stats(input_wishart, layover_file):
     print(classes, class_percent)
 
 
-do_averaging('Input/cpd_tdx_clip.tif', 'Input/cpd_tsx_clip.tif', 'Fresh_Snow/cpd_avg', 'Fresh_Snow/lia_avg', False, wsize=(2, 2))
-cpd2freshsnow('Fresh_Snow/cpd_avg.tif', 'Fresh_Snow/lia_avg.tif', 'Fresh_Snow/fsd_ng')
-do_validation(range_min=65, range_max=65)
-#do_validation('r', step_size=1.19)
-#get_wishart_class_stats('Wishart_Analysis/Jan.tif', 'Wishart_Analysis/layover.tif')
-#get_wishart_class_stats('Wishart_Analysis/Jun.tif', 'Wishart_Analysis/layover.tif')
-#print('FILTERED IMAGE VALIDATION...')
-# gk = get_gaussian_kernel((21,21), 15)
-# print(gk)
-# plt.imshow(gk, interpolation=None)
-# plt.show()
-#generate_ndvi('Bands/Red.tif', 'Bands/NIR.tif', 'Bands/NDVI_Landsat.tif')
+def sensitivity_analysis(image_dict):
+    """
+    Main caller function for FSD sensitivity analysis
+    :param image_dict: Image dictionary containing GDAL references
+    :return: None
+    """
+
+    wrange = range(3, 66, 2)
+    fwindows = [(i, j) for i, j in zip(wrange, wrange)]
+    # cwindows = fwindows.copy()
+    # fwindows = [(49, 49)]
+    cwindows = [(5, 5)]
+    coh_threshold = [0.]
+    apply_masks = True
+    verbose = False
+    wf = True
+    lf = True
+    lia_file = image_dict['LIA']
+    outfile = open('sensitivity_fsd.csv', 'a+')
+    outfile.write('CWindow CThreshold FWindow Min(cm) Max(cm) Mean(cm) SD(cm)\n')
+    print('Computation started...')
+    for wsize in cwindows:
+        ws1, ws2 = int(wsize[0] / 2.), int(wsize[1] / 2.)
+        wstr1 = '(' + str(wsize[0]) + ',' + str(wsize[1]) + ')'
+        print('Computing CPD and Coherence...')
+        cpd_arr, coh_arr = calc_cpd(image_dict, (ws1, ws2), apply_masks=apply_masks, verbose=verbose, wf=wf,
+                                    load_files=lf)
+        for ct in coh_threshold:
+                print('Calculating fresh snow depth ...')
+                fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold=ct, verbose=verbose, wf=wf,
+                                        load_file=lf)
+                for fsize in fwindows:
+                    fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
+                    print('FSD Ensemble Averaging')
+                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD', verbose=verbose, wf=wf)
+                    vr = check_values(fsd_avg, lia_file, (700089.771, 3581794.5556))  # Dhundi
+                    vr_str = ' '.join([str(r) for r in vr])
+                    wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
+                    final_str = wstr1 + ' ' + str(ct) + ' ' + wstr2 + ' ' + vr_str + '\n'
+                    print(final_str)
+                    outfile.write(final_str)
+
+
+image_dict = read_images('../../THESIS/Thesis_Files/Polinsar/Clipped_Tifs')
+sensitivity_analysis(image_dict)
+
 
