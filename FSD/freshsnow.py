@@ -11,6 +11,7 @@ SNOW_DENSITY = 0.06 # gm/cc
 WAVELENGTH = 3.10880853
 NO_DATA_VALUE = -32768
 MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
+DHUNDI_COORDS = (700089.771, 3581794.5556)
 
 
 def read_images(path, imgformat='*.tif'):
@@ -199,7 +200,7 @@ def retrieve_pixel_coords(geo_coord, data_source):
     return px, py
 
 
-def check_values(img_arr, img_file, geocoords, nsize=(1, 1), is_complex=False):
+def check_values(img_arr, img_file, geocoords, nsize=(1, 1), is_complex=False, full_stat=False):
     """
     Validate results
     :param img_arr: Image array to validate
@@ -207,14 +208,19 @@ def check_values(img_arr, img_file, geocoords, nsize=(1, 1), is_complex=False):
     :param geocoords: Geo-coordinates in tuple format
     :param nsize: Validation window size (should be half of the desired window size)
     :param is_complex: Set true for complex images such as the coherency image
-    :return: Min, max, mean and standard deviation as tuple
+    :param full_stat: Return min, max, mean and standard deviation if true, mean and sd if false
+    :return: Tuple containing statistics
     """
 
     px, py = retrieve_pixel_coords(geocoords, img_file)
     if is_complex:
         img_arr = np.abs(img_arr)
     img_loc = get_ensemble_window(img_arr, (py, px), nsize)
-    return np.nanmin(img_loc), np.nanmax(img_loc), np.nanmean(img_loc), np.nanstd(img_loc)
+    mean = np.nanmean(img_loc)
+    sd = np.nanstd(img_loc)
+    if full_stat:
+        return np.nanmin(img_loc), np.nanmax(img_loc), mean, sd
+    return mean, sd
 
 
 def get_ensemble_window(image_arr, index, wsize):
@@ -368,7 +374,7 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
 
 
 def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shape='o', verbose=True,
-                  wf=True, load_file=False):
+                  wf=True, load_file=False, fsd_threshold=100):
     """
     Compute fresh snow depth from CPD
     :param cpd_arr: CPD array
@@ -380,6 +386,7 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shap
     :param verbose: Set true for log details
     :param wf: Set true to write intermediate files
     :param load_file: Set true to load existing FSD numpy binary and skip computation
+    :param fsd_threshold: Maximum possible fresh snow depth (cm) in the study area, outlier values are set to zero
     :return: Fresh snow depth array
     """
     if not load_file:
@@ -401,6 +408,8 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shap
                     xeta_diff = np.sqrt(eff_v - sin_inc_sq) - np.sqrt(eff_h - sin_inc_sq)
                     if xeta_diff < 0:
                         fsd_val = np.float32(-cpd * WAVELENGTH / (4 * np.pi * xeta_diff))
+                        if fsd_val >= fsd_threshold:
+                            fsd_val = 0
                 fsd_arr[index] = fsd_val
                 if verbose:
                     print('FSD=', index, fsd_val)
@@ -409,6 +418,23 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shap
     else:
         fsd_arr = np.load('Out/FSD_Unf.npy')
     return fsd_arr
+
+
+def get_fresh_swe(fsd_arr, density, img_file, wf=True):
+    """
+    Calculate fresh snow water equivalent (SWE) in mm or kg/m^3
+    :param fsd_arr: Fresh snow depth array in cm
+    :param density: Snow density (scalar or array) in g/cm^3
+    :param img_file: Original image file containing affine transformation parameters
+    :param wf: Set true to write intermediate files
+    :return: SWE array
+    """
+
+    swe = fsd_arr * density * 10
+    if wf:
+        np.save('Out/FSD_SWE', swe)
+        write_file(swe.copy(), img_file, outfile='Out/FSD_SWE', is_complex=False)
+    return swe
 
 
 def get_wishart_class_stats(input_wishart, layover_file):
@@ -446,16 +472,16 @@ def sensitivity_analysis(image_dict):
     wrange = range(3, 66, 2)
     fwindows = [(i, j) for i, j in zip(wrange, wrange)]
     # cwindows = fwindows.copy()
-    # fwindows = [(49, 49)]
-    cwindows = [(5, 5)]
+    # fwindows = [(39, 39)]
+    cwindows = [(3, 3)]
     coh_threshold = [0.]
     apply_masks = True
     verbose = False
     wf = True
     lf = True
     lia_file = image_dict['LIA']
-    outfile = open('sensitivity_fsd.csv', 'a+')
-    outfile.write('CWindow CThreshold FWindow Min(cm) Max(cm) Mean(cm) SD(cm)\n')
+    outfile = open('sensitivity_fsd_swe.csv', 'a+')
+    outfile.write('CWindow CThreshold FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
     print('Computation started...')
     for wsize in cwindows:
         ws1, ws2 = int(wsize[0] / 2.), int(wsize[1] / 2.)
@@ -471,15 +497,17 @@ def sensitivity_analysis(image_dict):
                     fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
                     print('FSD Ensemble Averaging')
                     fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD', verbose=verbose, wf=wf)
-                    vr = check_values(fsd_avg, lia_file, (700089.771, 3581794.5556))  # Dhundi
-                    vr_str = ' '.join([str(r) for r in vr])
+                    swe = get_fresh_swe(fsd_avg, SNOW_DENSITY, img_file=lia_file)
+                    vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
+                    vr_str1 = ' '.join([str(r) for r in vr])
                     wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
-                    final_str = wstr1 + ' ' + str(ct) + ' ' + wstr2 + ' ' + vr_str + '\n'
+                    vr = check_values(swe, lia_file, DHUNDI_COORDS)
+                    vr_str2 = ' '.join([str(r) for r in vr])
+                    final_str = wstr1 + ' ' + str(ct) + ' ' + wstr2 + ' ' + vr_str1 + ' ' + vr_str2 + '\n'
                     print(final_str)
                     outfile.write(final_str)
 
 
 image_dict = read_images('../../THESIS/Thesis_Files/Polinsar/Clipped_Tifs')
 sensitivity_analysis(image_dict)
-
 
