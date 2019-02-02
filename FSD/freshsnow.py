@@ -6,12 +6,12 @@ import glob
 
 EFF_AIR = 1.0005
 EFF_ICE = 3.179
-ICE_DENSITY = 0.917 # gm/cc
-SNOW_DENSITY = 0.06 # gm/cc
-WAVELENGTH = 3.10880853
+ICE_DENSITY = 0.917  # gm/cc
+FRESH_SNOW_DENSITY = 0.06  # gm/cc
+WAVELENGTH = 3.10880853  # cm
 NO_DATA_VALUE = -32768
 MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
-DHUNDI_COORDS = (700089.771, 3581794.5556)
+DHUNDI_COORDS = (700089.771, 3581794.5556)  # UTM 43N
 
 
 def read_images(path, imgformat='*.tif'):
@@ -21,6 +21,7 @@ def read_images(path, imgformat='*.tif'):
     :param imgformat: Type of image file
     :return: Dictionary of GDAL Opened references/ pointers to specific files
     """
+
     print("Reading images...")
     images = {}
     files = os.path.join(path, imgformat)
@@ -38,6 +39,7 @@ def get_complex_image(img_file, is_dual=False):
     :param is_dual: True if image file is stored in two separate bands
     :return: If dual is set true, a complex numpy array is returned, numpy array tuple otherwise
     """
+
     mst = img_file.GetRasterBand(1).ReadAsArray() + img_file.GetRasterBand(2).ReadAsArray() * 1j
     mst[mst == np.complex(NO_DATA_VALUE, NO_DATA_VALUE)] = np.nan
     if not is_dual:
@@ -53,6 +55,7 @@ def get_image_array(img_file):
     :param img_file: GDAL reference file
     :return: Numpy array with nan set accordingly
     """
+
     arr = img_file.GetRasterBand(1).ReadAsArray()
     arr[arr == NO_DATA_VALUE] = np.nan
     return arr
@@ -66,6 +69,7 @@ def set_nan_img(img_arr, layover_file, forest_file):
     :param forest_file: Forest file, forest marked with 0
     :return: Nan set array
     """
+
     layover = get_image_array(layover_file)
     forest = get_image_array(forest_file)
     for idx, lval in np.ndenumerate(layover):
@@ -159,7 +163,7 @@ def get_depolarisation_factor(axial_ratio, shape):
     depolarisation_factorx = depolarisation_factory = depolarisation_factorz = 1/3.
     if shape == 'o':
         eccentricity = np.sqrt(axial_ratio ** 2 - 1)
-        depolarisation_factorz = (1 + eccentricity**2) * (eccentricity- np.arctan(eccentricity)) / eccentricity ** 3
+        depolarisation_factorz = (1 + eccentricity**2) * (eccentricity - np.arctan(eccentricity)) / eccentricity ** 3
         depolarisation_factorx = depolarisation_factory = 0.5 * (1 - depolarisation_factorz)
     elif shape == 'p':
         eccentricity = np.sqrt(1 - axial_ratio ** 2)
@@ -307,7 +311,7 @@ def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_mask
                           verbose=verbose, wf=False)
 
     tmat = num / (np.sqrt(d1 * d2))
-    tmat[tmat > 1] = 1 + 0j
+    tmat[np.abs(tmat) > 1] = 1 + 0j
 
     lia_arr = get_image_array(lia_file)
     if apply_masks:
@@ -333,6 +337,7 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
     :param load_files: Set true to load existing numpy binary files and skip computation
     :return: Tuple containing averaged CPD array and real coherence array
     """
+
     if not load_files:
         hh_file = image_dict['HH']
         vv_file = image_dict['VV']
@@ -389,8 +394,9 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shap
     :param fsd_threshold: Maximum possible fresh snow depth (cm) in the study area, outlier values are set to zero
     :return: Fresh snow depth array
     """
+
     if not load_file:
-        fvol = SNOW_DENSITY/ICE_DENSITY
+        fvol = FRESH_SNOW_DENSITY/ICE_DENSITY
         depolarisation_factors = get_depolarisation_factor(axial_ratio, shape)
         eff_h = get_effective_permittivity(fvol, depolarisation_factors[0])
         eff_y = get_effective_permittivity(fvol, depolarisation_factors[1])
@@ -474,11 +480,11 @@ def sensitivity_analysis(image_dict):
     # cwindows = fwindows.copy()
     # fwindows = [(39, 39)]
     cwindows = [(3, 3)]
-    coh_threshold = [0.]
+    coh_threshold = [0]
     apply_masks = True
     verbose = False
-    wf = True
-    lf = True
+    wf = False
+    lf = False
     lia_file = image_dict['LIA']
     outfile = open('sensitivity_fsd_swe.csv', 'a+')
     outfile.write('CWindow CThreshold FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
@@ -492,12 +498,12 @@ def sensitivity_analysis(image_dict):
         for ct in coh_threshold:
                 print('Calculating fresh snow depth ...')
                 fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold=ct, verbose=verbose, wf=wf,
-                                        load_file=lf)
+                                        load_file=False, fsd_threshold=1000)
                 for fsize in fwindows:
                     fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
                     print('FSD Ensemble Averaging')
                     fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD', verbose=verbose, wf=wf)
-                    swe = get_fresh_swe(fsd_avg, SNOW_DENSITY, img_file=lia_file)
+                    swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
                     vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
                     vr_str1 = ' '.join([str(r) for r in vr])
                     wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
