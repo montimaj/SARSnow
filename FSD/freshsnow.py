@@ -326,7 +326,7 @@ def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_mask
     return tmat
 
 
-def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False):
+def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False, from_coh=False):
     """
     Calculate copolar phase difference from complex coherency matrix
     :param image_dict: Image dictionary containing GDAL references
@@ -335,6 +335,7 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
     :param verbose: Set true for log details
     :param wf: Set true to save intermediate files
     :param load_files: Set true to load existing numpy binary files and skip computation
+    :param from_coh: Set true to calculate CPD from complex coherence
     :return: Tuple containing averaged CPD array and real coherence array
     """
 
@@ -353,15 +354,22 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
         vv_mst = set_nan_img(vv_mst, layover_file, forest_file)
         vv_slv = set_nan_img(vv_slv, layover_file, forest_file)
 
-        coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
-                                           verbose=verbose, outfile='HH', wf=False)
-        coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
-                                           verbose=verbose, outfile='VV', wf=False)
-        cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
-        cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
-        cpd_avg = (cpd_mst + cpd_slv) / 2.
-        coh_avg = np.abs((coh_mat_mst + coh_mat_slv) / 2)
+        if from_coh:
 
+            coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                               verbose=verbose, outfile='HH', wf=False)
+            coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                               verbose=verbose, outfile='VV', wf=False)
+            cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
+            cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
+            cpd_avg = (cpd_mst + cpd_slv) / 2.
+            coh_avg = np.abs((coh_mat_mst + coh_mat_slv) / 2)
+        else:
+            cpd_mst = np.arctan2(vv_mst.imag, vv_mst.real) - np.arctan2(hh_mst.imag, hh_mst.real)
+            cpd_slv = np.arctan2(vv_slv.imag, vv_slv.real) - np.arctan2(hh_slv.imag, hh_slv.real)
+            cpd_avg = (cpd_mst + cpd_slv) / 2.
+            cpd_avg = get_ensemble_avg(cpd_avg, wsize=wsize, image_file=lia_file, outfile='CPD', verbose=verbose,
+                                       wf=False, is_complex=False)
         lia_arr = get_image_array(lia_file)
         if apply_masks:
             layover_arr = get_image_array(layover_file)
@@ -369,6 +377,9 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
             cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, layover_arr, forest_arr)
         else:
             cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, apply_masks=False)
+        if not from_coh:
+            coh_avg = cpd_avg.copy()
+            coh_avg[~np.isnan(coh_avg)] = 1
         if wf:
             np.save('Out/CPD_Avg', cpd_avg)
             np.save('Out/Coh_Avg', coh_avg)
@@ -378,13 +389,14 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
     return cpd_avg, coh_avg
 
 
-def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shape='o', verbose=True,
+def cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file, coh_threshold, axial_ratio=2, shape='o', verbose=True,
                   wf=True, load_file=False, fsd_threshold=100):
     """
     Compute fresh snow depth from CPD
     :param cpd_arr: CPD array
     :param lia_file: Local incidence angle GDAL reference
     :param coh_arr: Real valued coherence array
+    :param ssd_file: Standing snow depth GDAL reference, SSD > FSD condition must hold true
     :param coh_threshold: Coherence threshold
     :param axial_ratio: Axial ratio
     :param shape: Shape of snow particle
@@ -404,6 +416,7 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shap
 
         lia_arr = np.deg2rad(get_image_array(lia_file))
         fsd_arr = np.full_like(cpd_arr, np.nan, dtype=np.float32)
+        ssd_arr = get_image_array(ssd_file)
         for index, cpd in np.ndenumerate(cpd_arr):
             if not np.isnan(cpd):
                 fsd_val = 0
@@ -414,7 +427,7 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold, axial_ratio=2, shap
                     xeta_diff = np.sqrt(eff_v - sin_inc_sq) - np.sqrt(eff_h - sin_inc_sq)
                     if xeta_diff < 0:
                         fsd_val = np.float32(-cpd * WAVELENGTH / (4 * np.pi * xeta_diff))
-                        if fsd_val >= fsd_threshold:
+                        if fsd_val >= fsd_threshold or fsd_val >= ssd_arr[index]:
                             fsd_val = 0
                 fsd_arr[index] = fsd_val
                 if verbose:
@@ -475,15 +488,15 @@ def sensitivity_analysis(image_dict):
     :return: None
     """
 
-    wrange = range(3, 66, 2)
-    fwindows = [(i, j) for i, j in zip(wrange, wrange)]
+    # wrange = range(3, 66, 2)
+    # fwindows = [(i, j) for i, j in zip(wrange, wrange)]
     # cwindows = fwindows.copy()
-    # fwindows = [(39, 39)]
-    cwindows = [(3, 3)]
+    fwindows = [(45, 45)]
+    cwindows = [(5, 5)]
     coh_threshold = [0]
     apply_masks = True
     verbose = False
-    wf = False
+    wf = True
     lf = False
     lia_file = image_dict['LIA']
     outfile = open('sensitivity_fsd_swe.csv', 'a+')
@@ -497,12 +510,12 @@ def sensitivity_analysis(image_dict):
                                     load_files=lf)
         for ct in coh_threshold:
                 print('Calculating fresh snow depth ...')
-                fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, coh_threshold=ct, verbose=verbose, wf=wf,
-                                        load_file=False, fsd_threshold=1000)
+                fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
+                                        verbose=verbose, wf=wf, load_file=False, fsd_threshold=200)
                 for fsize in fwindows:
                     fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
                     print('FSD Ensemble Averaging')
-                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD', verbose=verbose, wf=wf)
+                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_45_5', verbose=verbose, wf=wf)
                     swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
                     vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
                     vr_str1 = ' '.join([str(r) for r in vr])
