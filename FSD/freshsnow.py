@@ -288,6 +288,54 @@ def get_ensemble_avg(image_arr, wsize, image_file, outfile, stat='mean', verbose
     return emat
 
 
+def calc_coh_mat(s_hh, s_vv, img_dict, outfile, num_looks=10, apply_masks=True, verbose=True, wf=True):
+    """
+    Calculate complex coherency matrix based on looks
+    :param s_hh: HH array
+    :param s_vv: VV array
+    :param img_dict: Image dictionary containing GDAL references
+    :param outfile: Output file path
+    :param num_looks: Number of looks to apply
+    :param apply_masks: Set true for applying layover and forest masks
+    :param verbose: Set true for detailed logs
+    :param wf: Set true to save intermediate results
+    :return: Nan fixed complex coherency matrix
+    """
+
+    tmat = np.full_like(s_hh, np.nan, dtype=np.complex)
+    max_y = tmat.shape[1]
+    for itr in np.ndenumerate(tmat):
+        idx = itr[0]
+        start_x = idx[0]
+        start_y = idx[1]
+        end_y = start_y + num_looks
+        if end_y > max_y:
+            end_y = max_y
+        sub_hh = s_hh[start_x][start_y: end_y]
+        sub_vv = s_vv[start_x][start_y: end_y]
+        sub_num = sub_vv * np.conj(sub_hh)
+        nan_check = np.isnan(np.array([[sub_hh[0], sub_vv[0], sub_num[0]]]))
+        if len(nan_check[nan_check]) == 0:
+            num = np.nansum(sub_num)
+            denom = np.sqrt(np.nansum(sub_vv * np.conj(sub_vv))) * np.sqrt(np.nansum(sub_hh * np.conj(sub_hh)))
+            tmat[idx] = num / denom
+            if np.abs(tmat[idx]) > 1:
+                tmat[idx] = 1 + 0j
+            if verbose:
+                print('Coherence at ', idx, '= ', np.abs(tmat[idx]))
+    lia_arr = get_image_array(img_dict['LIA'])
+    if apply_masks:
+        layover_arr = get_image_array(img_dict['LAYOVER'])
+        forest_arr = get_image_array(img_dict['FOREST'])
+        tmat = nanfix_tmat_arr(tmat, lia_arr, layover_arr, forest_arr)
+    else:
+        tmat = nanfix_tmat_arr(tmat, lia_arr, apply_masks=False)
+    if wf:
+        np.save('Out/Coherence_' + outfile, tmat)
+        write_file(tmat.copy(), img_dict['LIA'], 'Out/Coherence_' + outfile)
+    return tmat
+
+
 def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_masks=True, verbose=True, wf=False):
     """
     Calculate complex coherency matrix based on ensemble averaging
@@ -326,7 +374,8 @@ def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_mask
     return tmat
 
 
-def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False, from_coh=False):
+def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False, from_coh=False,
+             coh_type='E'):
     """
     Calculate copolar phase difference from complex coherency matrix
     :param image_dict: Image dictionary containing GDAL references
@@ -336,6 +385,7 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
     :param wf: Set true to save intermediate files
     :param load_files: Set true to load existing numpy binary files and skip computation
     :param from_coh: Set true to calculate CPD from complex coherence
+    :param coh_type: Type of coherence averaging, 'L' for look based, 'E' for ensemble based
     :return: Tuple containing averaged CPD array and real coherence array
     """
 
@@ -355,11 +405,17 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
         vv_slv = set_nan_img(vv_slv, layover_file, forest_file)
 
         if from_coh:
-
-            coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
-                                               verbose=verbose, outfile='HH', wf=False)
-            coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
-                                               verbose=verbose, outfile='VV', wf=False)
+            if coh_type == 'E':
+                coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                                   verbose=verbose, outfile='HH', wf=False)
+                coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                                   verbose=verbose, outfile='VV', wf=False)
+            else:
+                ws = wsize[0] * 2 + 1
+                coh_mat_mst = calc_coh_mat(hh_mst, vv_mst, image_dict, num_looks=ws, apply_masks=apply_masks,
+                                           verbose=verbose, outfile='HH', wf=False)
+                coh_mat_slv = calc_coh_mat(hh_slv, vv_slv, image_dict, num_looks=ws, apply_masks=apply_masks,
+                                           verbose=verbose, outfile='VV', wf=False)
             cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
             cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
             cpd_avg = (cpd_mst + cpd_slv) / 2.
@@ -491,8 +547,8 @@ def sensitivity_analysis(image_dict):
     # wrange = range(3, 66, 2)
     # fwindows = [(i, j) for i, j in zip(wrange, wrange)]
     # cwindows = fwindows.copy()
-    fwindows = [(45, 45)]
-    cwindows = [(5, 5)]
+    fwindows = [(49, 49)]
+    cwindows = [(3, 3)]
     coh_threshold = [0]
     apply_masks = True
     verbose = False
@@ -507,15 +563,15 @@ def sensitivity_analysis(image_dict):
         wstr1 = '(' + str(wsize[0]) + ',' + str(wsize[1]) + ')'
         print('Computing CPD and Coherence...')
         cpd_arr, coh_arr = calc_cpd(image_dict, (ws1, ws2), apply_masks=apply_masks, verbose=verbose, wf=wf,
-                                    load_files=lf)
+                                    load_files=lf, from_coh=False, coh_type='L')
         for ct in coh_threshold:
                 print('Calculating fresh snow depth ...')
                 fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
-                                        verbose=verbose, wf=wf, load_file=False, fsd_threshold=200)
+                                        verbose=verbose, wf=wf, load_file=lf, fsd_threshold=200)
                 for fsize in fwindows:
                     fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
                     print('FSD Ensemble Averaging')
-                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_45_5', verbose=verbose, wf=wf)
+                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_49_C3', verbose=verbose, wf=wf)
                     swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
                     vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
                     vr_str1 = ' '.join([str(r) for r in vr])
