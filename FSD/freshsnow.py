@@ -4,10 +4,10 @@ import affine
 import os
 import glob
 
-EFF_AIR = 1.0005
+EFF_AIR = 1.00059
 EFF_ICE = 3.179
 ICE_DENSITY = 0.917  # gm/cc
-FRESH_SNOW_DENSITY = 0.06  # gm/cc
+FRESH_SNOW_DENSITY = 0.065  # gm/cc
 WAVELENGTH = 3.10880853  # cm
 NO_DATA_VALUE = -32768
 MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
@@ -161,6 +161,8 @@ def get_depolarisation_factor(axial_ratio, shape):
     """
 
     depolarisation_factorx = depolarisation_factory = depolarisation_factorz = 1/3.
+    if axial_ratio == 1:
+        return depolarisation_factorx, depolarisation_factory, depolarisation_factorz
     if shape == 'o':
         eccentricity = np.sqrt(axial_ratio ** 2 - 1)
         depolarisation_factorz = (1 + eccentricity**2) * (eccentricity - np.arctan(eccentricity)) / eccentricity ** 3
@@ -445,7 +447,7 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
     return cpd_avg, coh_avg
 
 
-def cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file, coh_threshold, axial_ratio=2, shape='o', verbose=True,
+def cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file, coh_threshold, axial_ratio=2., shape='o', verbose=True,
                   wf=True, load_file=False, fsd_threshold=100):
     """
     Compute fresh snow depth from CPD
@@ -476,13 +478,13 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file, coh_threshold, axial_rat
         for index, cpd in np.ndenumerate(cpd_arr):
             if not np.isnan(cpd):
                 fsd_val = 0
-                if cpd > 0 and coh_arr[index] > coh_threshold:
+                if coh_arr[index] > coh_threshold:
                     lia_val = lia_arr[index]
                     sin_inc_sq = np.sin(lia_val) ** 2
                     eff_v = eff_y * np.cos(lia_val) ** 2 + eff_z * sin_inc_sq
                     xeta_diff = np.sqrt(eff_v - sin_inc_sq) - np.sqrt(eff_h - sin_inc_sq)
-                    if xeta_diff < 0:
-                        fsd_val = np.float32(-cpd * WAVELENGTH / (4 * np.pi * xeta_diff))
+                    if xeta_diff != 0:
+                        fsd_val = np.abs(np.float32(cpd * WAVELENGTH / (4 * np.pi * xeta_diff)))
                         if fsd_val >= fsd_threshold or fsd_val >= ssd_arr[index]:
                             fsd_val = 0
                 fsd_arr[index] = fsd_val
@@ -547,15 +549,15 @@ def sensitivity_analysis(image_dict):
     # wrange = range(3, 66, 2)
     # fwindows = [(i, j) for i, j in zip(wrange, wrange)]
     # cwindows = fwindows.copy()
-    fwindows = [(49, 49)]
+    fwindows = [(65, 65)]
     cwindows = [(3, 3)]
     coh_threshold = [0]
     apply_masks = True
     verbose = False
-    wf = True
-    lf = False
+    wf = False
+    lf = True
     lia_file = image_dict['LIA']
-    outfile = open('sensitivity_fsd_swe.csv', 'a+')
+    outfile = open('sensitivity_FSD_3.csv', 'a+')
     outfile.write('CWindow CThreshold FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
     print('Computation started...')
     for wsize in cwindows:
@@ -563,15 +565,15 @@ def sensitivity_analysis(image_dict):
         wstr1 = '(' + str(wsize[0]) + ',' + str(wsize[1]) + ')'
         print('Computing CPD and Coherence...')
         cpd_arr, coh_arr = calc_cpd(image_dict, (ws1, ws2), apply_masks=apply_masks, verbose=verbose, wf=wf,
-                                    load_files=lf, from_coh=False, coh_type='L')
+                                    load_files=lf, from_coh=False, coh_type='E')
         for ct in coh_threshold:
                 print('Calculating fresh snow depth ...')
                 fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
-                                        verbose=verbose, wf=wf, load_file=lf, fsd_threshold=200)
+                                        verbose=verbose, wf=wf, load_file=False, fsd_threshold=200, axial_ratio=1.5)
                 for fsize in fwindows:
                     fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
                     print('FSD Ensemble Averaging')
-                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_49_C3', verbose=verbose, wf=wf)
+                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New', verbose=verbose, wf=wf)
                     swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
                     vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
                     vr_str1 = ' '.join([str(r) for r in vr])
