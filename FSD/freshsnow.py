@@ -7,7 +7,7 @@ import glob
 EFF_AIR = 1.00059
 EFF_ICE = 3.179
 ICE_DENSITY = 0.917  # gm/cc
-FRESH_SNOW_DENSITY = 0.065  # gm/cc
+FRESH_SNOW_DENSITY = 0.07  # gm/cc
 WAVELENGTH = 3.10880853  # cm
 NO_DATA_VALUE = -32768
 MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
@@ -377,7 +377,7 @@ def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_mask
 
 
 def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False, from_coh=False,
-             coh_type='E'):
+             coh_type='E', calc_coh=True):
     """
     Calculate copolar phase difference from complex coherency matrix
     :param image_dict: Image dictionary containing GDAL references
@@ -406,28 +406,33 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
         vv_mst = set_nan_img(vv_mst, layover_file, forest_file)
         vv_slv = set_nan_img(vv_slv, layover_file, forest_file)
 
+        print('Computing copolar coherence...')
+        if coh_type == 'E':
+            coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                               verbose=verbose, outfile='HH', wf=False)
+            coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
+                                               verbose=verbose, outfile='VV', wf=False)
+        else:
+            ws = wsize[0] * 2 + 1
+            coh_mat_mst = calc_coh_mat(hh_mst, vv_mst, image_dict, num_looks=ws, apply_masks=apply_masks,
+                                       verbose=verbose, outfile='HH', wf=False)
+            coh_mat_slv = calc_coh_mat(hh_slv, vv_slv, image_dict, num_looks=ws, apply_masks=apply_masks,
+                                       verbose=verbose, outfile='VV', wf=False)
+        coh_avg = np.abs((coh_mat_mst + coh_mat_slv) / 2)
+        print(check_values(coh_avg, lia_file, DHUNDI_COORDS))
+
+        print('Computing CPD...')
         if from_coh:
-            if coh_type == 'E':
-                coh_mat_mst = calc_ensemble_cohmat(hh_mst, vv_mst, image_dict, wsize=wsize, apply_masks=apply_masks,
-                                                   verbose=verbose, outfile='HH', wf=False)
-                coh_mat_slv = calc_ensemble_cohmat(hh_slv, vv_slv, image_dict, wsize=wsize, apply_masks=apply_masks,
-                                                   verbose=verbose, outfile='VV', wf=False)
-            else:
-                ws = wsize[0] * 2 + 1
-                coh_mat_mst = calc_coh_mat(hh_mst, vv_mst, image_dict, num_looks=ws, apply_masks=apply_masks,
-                                           verbose=verbose, outfile='HH', wf=False)
-                coh_mat_slv = calc_coh_mat(hh_slv, vv_slv, image_dict, num_looks=ws, apply_masks=apply_masks,
-                                           verbose=verbose, outfile='VV', wf=False)
             cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
             cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
             cpd_avg = (cpd_mst + cpd_slv) / 2.
-            coh_avg = np.abs((coh_mat_mst + coh_mat_slv) / 2)
         else:
             cpd_mst = np.arctan2(vv_mst.imag, vv_mst.real) - np.arctan2(hh_mst.imag, hh_mst.real)
             cpd_slv = np.arctan2(vv_slv.imag, vv_slv.real) - np.arctan2(hh_slv.imag, hh_slv.real)
             cpd_avg = (cpd_mst + cpd_slv) / 2.
             cpd_avg = get_ensemble_avg(cpd_avg, wsize=wsize, image_file=lia_file, outfile='CPD', verbose=verbose,
                                        wf=False, is_complex=False)
+
         lia_arr = get_image_array(lia_file)
         if apply_masks:
             layover_arr = get_image_array(layover_file)
@@ -435,9 +440,7 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
             cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, layover_arr, forest_arr)
         else:
             cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, apply_masks=False)
-        if not from_coh:
-            coh_avg = cpd_avg.copy()
-            coh_avg[~np.isnan(coh_avg)] = 1
+
         if wf:
             np.save('Out/CPD_Avg', cpd_avg)
             np.save('Out/Coh_Avg', coh_avg)
@@ -546,10 +549,10 @@ def sensitivity_analysis(image_dict):
     :return: None
     """
 
-    # wrange = range(3, 66, 2)
-    # fwindows = [(i, j) for i, j in zip(wrange, wrange)]
+    wrange = range(45, 66, 2)
+    fwindows = [(i, j) for i, j in zip(wrange, wrange)]
     # cwindows = fwindows.copy()
-    fwindows = [(65, 65)]
+    # fwindows = [(3, 3)]
     cwindows = [(3, 3)]
     coh_threshold = [0]
     apply_masks = True
@@ -557,7 +560,7 @@ def sensitivity_analysis(image_dict):
     wf = False
     lf = True
     lia_file = image_dict['LIA']
-    outfile = open('sensitivity_FSD_3.csv', 'a+')
+    outfile = open('sensitivity_FSD_4.csv', 'a+')
     outfile.write('CWindow CThreshold FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
     print('Computation started...')
     for wsize in cwindows:
@@ -573,7 +576,7 @@ def sensitivity_analysis(image_dict):
                 for fsize in fwindows:
                     fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
                     print('FSD Ensemble Averaging')
-                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New', verbose=verbose, wf=wf)
+                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New_Test', verbose=verbose, wf=wf)
                     swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
                     vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
                     vr_str1 = ' '.join([str(r) for r in vr])
