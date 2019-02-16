@@ -377,9 +377,10 @@ def calc_ensemble_cohmat(s_hh, s_vv, img_dict, outfile, wsize=(5, 5), apply_mask
 
 
 def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True, load_files=False, from_coh=False,
-             coh_type='E', calc_coh=True):
+             coh_type='E', comp_cpd=True):
     """
     Calculate copolar phase difference from complex coherency matrix
+    :param comp_cpd: Set true for computing CPD
     :param image_dict: Image dictionary containing GDAL references
     :param wsize: Ensemble window size (should be half of the desired window)
     :param apply_masks: Set true to apply layover and forest masks
@@ -421,33 +422,36 @@ def calc_cpd(image_dict, wsize=(2, 2), apply_masks=True, verbose=False, wf=True,
         coh_avg = np.abs((coh_mat_mst + coh_mat_slv) / 2)
         print(check_values(coh_avg, lia_file, DHUNDI_COORDS))
 
-        print('Computing CPD...')
-        if from_coh:
-            cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
-            cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
-            cpd_avg = (cpd_mst + cpd_slv) / 2.
-        else:
-            cpd_mst = np.arctan2(vv_mst.imag, vv_mst.real) - np.arctan2(hh_mst.imag, hh_mst.real)
-            cpd_slv = np.arctan2(vv_slv.imag, vv_slv.real) - np.arctan2(hh_slv.imag, hh_slv.real)
-            cpd_avg = (cpd_mst + cpd_slv) / 2.
-            cpd_avg = get_ensemble_avg(cpd_avg, wsize=wsize, image_file=lia_file, outfile='CPD', verbose=verbose,
-                                       wf=False, is_complex=False)
+        if comp_cpd:
+            print('Computing CPD...')
+            if from_coh:
+                cpd_mst = np.arctan2(coh_mat_mst.imag, coh_mat_mst.real)
+                cpd_slv = np.arctan2(coh_mat_slv.imag, coh_mat_slv.real)
+                cpd_avg = (cpd_mst + cpd_slv) / 2.
+            else:
+                cpd_mst = np.arctan2(vv_mst.imag, vv_mst.real) - np.arctan2(hh_mst.imag, hh_mst.real)
+                cpd_slv = np.arctan2(vv_slv.imag, vv_slv.real) - np.arctan2(hh_slv.imag, hh_slv.real)
+                cpd_avg = (cpd_mst + cpd_slv) / 2.
+                cpd_avg = get_ensemble_avg(cpd_avg, wsize=wsize, image_file=lia_file, outfile='CPD', verbose=verbose,
+                                           wf=False, is_complex=False)
 
-        lia_arr = get_image_array(lia_file)
-        if apply_masks:
-            layover_arr = get_image_array(layover_file)
-            forest_arr = get_image_array(forest_file)
-            cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, layover_arr, forest_arr)
-        else:
-            cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, apply_masks=False)
+            lia_arr = get_image_array(lia_file)
+            if apply_masks:
+                layover_arr = get_image_array(layover_file)
+                forest_arr = get_image_array(forest_file)
+                cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, layover_arr, forest_arr)
+            else:
+                cpd_avg = nanfix_tmat_arr(cpd_avg, lia_arr, apply_masks=False)
 
-        if wf:
-            np.save('Out/CPD_Avg', cpd_avg)
-            np.save('Out/Coh_Avg', coh_avg)
+            if wf:
+                np.save('Out/CPD_Avg', cpd_avg)
+                np.save('Out/Coh_Avg', coh_avg)
     else:
         cpd_avg = np.load('Out/CPD_Avg.npy')
         coh_avg = np.load('Out/Coh_Avg.npy')
-    return cpd_avg, coh_avg
+    if comp_cpd:
+        return cpd_avg, coh_avg
+    return 1, coh_avg
 
 
 def cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file, coh_threshold, axial_ratio=2., shape='o', verbose=True,
@@ -517,31 +521,6 @@ def get_fresh_swe(fsd_arr, density, img_file, wf=True):
     return swe
 
 
-def get_wishart_class_stats(input_wishart, layover_file):
-    """
-    Calculate Wishart class percentages
-    :param input_wishart: Wishart classified image path
-    :param layover_file: Layover file path
-    :return: None
-    """
-
-    print('File: ', input_wishart)
-    input_wishart = gdal.Open(input_wishart)
-    layover_file = gdal.Open(layover_file)
-    wishart_arr = input_wishart.GetRasterBand(1).ReadAsArray()
-    layover_arr = layover_file.GetRasterBand(1).ReadAsArray()
-    new_arr = np.full_like(wishart_arr, NO_DATA_VALUE, dtype=np.int32)
-    print('Checking valid pixels...')
-    for index, value in np.ndenumerate(wishart_arr):
-        if value != 0 and layover_arr[index] == 0:
-            new_arr[index] = int(round(value))
-    classes, count = np.unique(new_arr, return_counts=True)
-    total_pixels = np.sum(count)
-    print('Total pixels=', total_pixels)
-    class_percent = np.float32(count * 100. / total_pixels)
-    print(classes, class_percent)
-
-
 def sensitivity_analysis(image_dict):
     """
     Main caller function for FSD sensitivity analysis
@@ -551,14 +530,14 @@ def sensitivity_analysis(image_dict):
 
     wrange = range(45, 66, 2)
     fwindows = [(i, j) for i, j in zip(wrange, wrange)]
-    # cwindows = fwindows.copy()
+    cwindows = [(3, 3), (5, 5), (7, 7), (9, 9), (11, 11)]
     # fwindows = [(3, 3)]
-    cwindows = [(3, 3)]
+    # cwindows = [(3, 3)]
     coh_threshold = [0]
     apply_masks = True
     verbose = False
     wf = False
-    lf = True
+    lf = False
     lia_file = image_dict['LIA']
     outfile = open('sensitivity_FSD_4.csv', 'a+')
     outfile.write('CWindow CThreshold FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
@@ -568,24 +547,24 @@ def sensitivity_analysis(image_dict):
         wstr1 = '(' + str(wsize[0]) + ',' + str(wsize[1]) + ')'
         print('Computing CPD and Coherence...')
         cpd_arr, coh_arr = calc_cpd(image_dict, (ws1, ws2), apply_masks=apply_masks, verbose=verbose, wf=wf,
-                                    load_files=lf, from_coh=False, coh_type='E')
-        for ct in coh_threshold:
-                print('Calculating fresh snow depth ...')
-                fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
-                                        verbose=verbose, wf=wf, load_file=False, fsd_threshold=200, axial_ratio=1.5)
-                for fsize in fwindows:
-                    fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
-                    print('FSD Ensemble Averaging')
-                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New_Test', verbose=verbose, wf=wf)
-                    swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
-                    vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
-                    vr_str1 = ' '.join([str(r) for r in vr])
-                    wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
-                    vr = check_values(swe, lia_file, DHUNDI_COORDS)
-                    vr_str2 = ' '.join([str(r) for r in vr])
-                    final_str = wstr1 + ' ' + str(ct) + ' ' + wstr2 + ' ' + vr_str1 + ' ' + vr_str2 + '\n'
-                    print(final_str)
-                    outfile.write(final_str)
+                                    load_files=lf, from_coh=False, coh_type='E', comp_cpd=False)
+        # for ct in coh_threshold:
+        #         print('Calculating fresh snow depth ...')
+        #         fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
+        #                                 verbose=verbose, wf=wf, load_file=False, fsd_threshold=200, axial_ratio=1.5)
+        #         for fsize in fwindows:
+        #             fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
+        #             print('FSD Ensemble Averaging')
+        #             fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New_Test', verbose=verbose, wf=wf)
+        #             swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
+        #             vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
+        #             vr_str1 = ' '.join([str(r) for r in vr])
+        #             wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
+        #             vr = check_values(swe, lia_file, DHUNDI_COORDS)
+        #             vr_str2 = ' '.join([str(r) for r in vr])
+        #             final_str = wstr1 + ' ' + str(ct) + ' ' + wstr2 + ' ' + vr_str1 + ' ' + vr_str2 + '\n'
+        #             print(final_str)
+        #             outfile.write(final_str)
 
 
 image_dict = read_images('../../THESIS/Thesis_Files/Polinsar/Clipped_Tifs')
