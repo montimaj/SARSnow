@@ -569,4 +569,3 @@ def sensitivity_analysis(image_dict):
 
 image_dict = read_images('../../THESIS/Thesis_Files/Polinsar/Clipped_Tifs')
 sensitivity_analysis(image_dict)
-
