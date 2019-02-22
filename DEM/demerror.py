@@ -36,7 +36,8 @@ def retrieve_pixel_coords(geo_coord, data_source):
     forward_transform = affine.Affine.from_gdal(*data_source.GetGeoTransform())
     reverse_transform = ~forward_transform
     px, py = reverse_transform * (x, y)
-    px, py = int(px + 0.5), int(py + 0.5)
+    # px, py = int(px + 0.5), int(py + 0.5)
+    px, py = int(np.floor(px)), int(np.floor(py))
     return px, py
 
 
@@ -61,35 +62,49 @@ def write_file(arr, src_file, outfile='test', no_data_value=NO_DATA_VALUE):
     out.FlushCache()
 
 
-def calculate_errors(dem_arr, dem_file, point_list):
+def calculate_errors(dem_arr, lia_arr, lia_arr_corr, dem_file, point_list, correct_dem=True):
     """
     Calculate DEM errors
     :param dem_arr: DEM array to validate
     :param dem_file: Original GDAL reference having affine transformation parameters
+    :param lia_arr: Uncorrected Local Incidence Angle
+    :param lia_arr_corr: Corrected Local Incidence Angle
     :param point_list: List of tuples containing N, X, Y, and Z values
+    :param correct_dem: Set true to write correct DEM
     :return None
     """
 
     N = []
     X = []
     Y = []
-    E = []
-    dem_corr = dem_arr.copy()
+    E1 = []
+    E2 = []
+    if correct_dem:
+        dem_corr = dem_arr.copy()
     for point in point_list:
         name = point[0]
         x = point[1]
         y = point[2]
         z = point[3]
         px, py = retrieve_pixel_coords((x, y), dem_file)
-        dem_corr[py, px] = z
-        error = dem_arr[py, px] - z
+        if correct_dem:
+            dem_corr[py, px] = z
+        error1 = dem_arr[py, px] - z
+        if np.isnan(error1):
+            error1 = NO_DATA_VALUE
+        error2 = lia_arr[py, px] - lia_arr_corr[py, px]
+        if np.isnan(error2):
+            error2 = NO_DATA_VALUE
         N.append(name)
         X.append(x)
         Y.append(y)
-        E.append(error)
-    df = pd.DataFrame({'N': N, 'X': X, 'Y': Y, 'E': E})
+        E1.append(np.round(error1, 2))
+        E2.append(np.round(error2, 2))
+
+    df = pd.DataFrame({'N': N, 'X': X, 'Y': Y, 'E1': E1, 'E2': E2})
     df.to_csv('DEM_Error.csv', index=False)
-    write_file(dem_corr.copy(), dem_file, outfile='Outputs/Alos_DEM_Corr')
+    if correct_dem:
+        write_file(dem_corr.copy(), dem_file, outfile='Outputs/Alos_DEM_Corr')
 
 
 def create_point_list(df):
@@ -106,8 +121,12 @@ def create_point_list(df):
 rohtang_df = pd.read_csv('Inputs/rohtang.csv')
 dhundi_df = pd.read_csv('Inputs/dhundi.csv')
 alos_dem = gdal.Open('Inputs/Alos_Clip.tif')
+lia_file1 = gdal.Open('Outputs/Alos_LIA.tif')
+lia_file2 = gdal.Open('Outputs/Alos_LIA_Corr.tif')
 dem_arr = get_image_array(alos_dem)
+lia_arr1 = get_image_array(lia_file1)
+lia_arr2 = get_image_array(lia_file2)
 rp = create_point_list(rohtang_df)
 dp = create_point_list(dhundi_df)
 all_points = rp + dp
-calculate_errors(dem_arr, alos_dem, all_points)
+calculate_errors(dem_arr, lia_arr1, lia_arr2, alos_dem, all_points, correct_dem=False)

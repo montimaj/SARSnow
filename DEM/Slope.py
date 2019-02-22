@@ -8,6 +8,8 @@ NO_DATA_VALUE = -32768
 def padwithzero(vector, pad_width, *args, **kwargs):
     """
     Apply zero padding
+    Main author: Abhisek Maiti
+    Modified by: Sayantan Majumdar
     :param vector: Input vector
     :param pad_width: Pad width to consider
     :return: Vector padded with desired number of zeros
@@ -18,7 +20,7 @@ def padwithzero(vector, pad_width, *args, **kwargs):
     return vector
 
 
-def derive_slope(dem_arr, incidence_angle, cell_size=3):
+def derive_slope(dem_arr, incidence_angle, cell_size=12.5):
     """
     Calculate slopes in x and y directions, LIA, and Orientation Angle
     Main author: Abhisek Maiti
