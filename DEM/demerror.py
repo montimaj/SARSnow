@@ -4,6 +4,9 @@ import numpy as np
 import affine
 
 
+NO_DATA_VALUE = -32768
+
+
 def get_image_array(img_file, set_no_data=True):
     """
     Read real numpy arrays from file
@@ -37,6 +40,27 @@ def retrieve_pixel_coords(geo_coord, data_source):
     return px, py
 
 
+def write_file(arr, src_file, outfile='test', no_data_value=NO_DATA_VALUE):
+    """
+    Write image files in TIF format
+    :param arr: Image array to write
+    :param src_file: Original image file for retrieving affine transformation parameters
+    :param outfile: Output file path
+    :param no_data_value: No data value to be set
+    :param is_complex: If true, write complex image array in two separate bands
+    :return: None
+    """
+
+    driver = gdal.GetDriverByName("GTiff")
+    out = driver.Create(outfile + ".tif", arr.shape[1], arr.shape[0], 1, gdal.GDT_Float32)
+    out.SetProjection(src_file.GetProjection())
+    out.SetGeoTransform(src_file.GetGeoTransform())
+    out.GetRasterBand(1).SetNoDataValue(no_data_value)
+    arr[np.isnan(arr)] = no_data_value
+    out.GetRasterBand(1).WriteArray(arr)
+    out.FlushCache()
+
+
 def calculate_errors(dem_arr, dem_file, point_list):
     """
     Calculate DEM errors
@@ -50,12 +74,14 @@ def calculate_errors(dem_arr, dem_file, point_list):
     X = []
     Y = []
     E = []
+    dem_corr = dem_arr.copy()
     for point in point_list:
         name = point[0]
         x = point[1]
         y = point[2]
         z = point[3]
         px, py = retrieve_pixel_coords((x, y), dem_file)
+        dem_corr[py, px] = z
         error = dem_arr[py, px] - z
         N.append(name)
         X.append(x)
@@ -63,6 +89,7 @@ def calculate_errors(dem_arr, dem_file, point_list):
         E.append(error)
     df = pd.DataFrame({'N': N, 'X': X, 'Y': Y, 'E': E})
     df.to_csv('DEM_Error.csv', index=False)
+    write_file(dem_corr.copy(), dem_file, outfile='Outputs/Alos_DEM_Corr')
 
 
 def create_point_list(df):
