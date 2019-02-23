@@ -53,11 +53,12 @@ def derive_slope(dem_arr, incidence_angle, cell_size=12.5):
                     i = block[2][2]
                     slope_x = ((c + (2 * f) + i) - (a + (2 * d) + g)) / (8 * cell_size)
                     slope_y = ((g + (2 * h) + i) - (a + (2 * b) + c)) / (8 * cell_size)
-                    orientation = slope_x / ((-1 * slope_y * np.cos(incidence_angle)) + np.sin(incidence_angle))
+                    orientation = np.arctan(slope_x / ((-1 * slope_y * np.cos(incidence_angle)) +
+                                                       np.sin(incidence_angle)))
                     li_num = (np.cos(np.arctan(slope_x))) * np.cos(np.arctan(slope_y) - incidence_angle)
                     li_denom = np.sqrt((((np.cos(np.arctan(slope_y))) ** 2) * ((np.sin(np.arctan(slope_x))) ** 2)) +
                                        ((np.cos(np.arctan(slope_x))) ** 2))
-                    li = li_num / li_denom
+                    li = np.arccos(li_num / li_denom)
                     lia_arr[k - dw][j - dw] = li
                     or_arr[k - dw][j - dw] = orientation
                     dx_arr[k - dw][j - dw] = slope_x
