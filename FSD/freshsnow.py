@@ -10,7 +10,7 @@ ICE_DENSITY = 0.917  # gm/cc
 FRESH_SNOW_DENSITY = 0.07  # gm/cc
 WAVELENGTH = 3.10880853  # cm
 NO_DATA_VALUE = -32768
-MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414)/4.
+MEAN_INC_ANGLE = (38.072940826416016 + 39.38078689575195 + 38.10858917236328 + 39.38400650024414) / 4.
 DHUNDI_COORDS = (700089.771, 3581794.5556)  # UTM 43N
 
 
@@ -160,12 +160,12 @@ def get_depolarisation_factor(axial_ratio, shape):
     :return: Tuple containing three depolarisation factors in x, y, and z directions
     """
 
-    depolarisation_factorx = depolarisation_factory = depolarisation_factorz = 1/3.
+    depolarisation_factorx = depolarisation_factory = depolarisation_factorz = 1 / 3.
     if axial_ratio == 1:
         return depolarisation_factorx, depolarisation_factory, depolarisation_factorz
     if shape == 'o':
         eccentricity = np.sqrt(axial_ratio ** 2 - 1)
-        depolarisation_factorz = (1 + eccentricity**2) * (eccentricity - np.arctan(eccentricity)) / eccentricity ** 3
+        depolarisation_factorz = (1 + eccentricity ** 2) * (eccentricity - np.arctan(eccentricity)) / eccentricity ** 3
         depolarisation_factorx = depolarisation_factory = 0.5 * (1 - depolarisation_factorz)
     elif shape == 'p':
         eccentricity = np.sqrt(1 - axial_ratio ** 2)
@@ -185,7 +185,7 @@ def get_effective_permittivity(fvol, depolarisation_factor):
     """
 
     eff_diff = EFF_ICE - EFF_AIR
-    eff = EFF_AIR * (1 + fvol * eff_diff/(EFF_AIR + (1 - fvol) * depolarisation_factor * eff_diff))
+    eff = EFF_AIR * (1 + fvol * eff_diff / (EFF_AIR + (1 - fvol) * depolarisation_factor * eff_diff))
     return eff
 
 
@@ -473,7 +473,7 @@ def cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file, coh_threshold, axial_rat
     """
 
     if not load_file:
-        fvol = FRESH_SNOW_DENSITY/ICE_DENSITY
+        fvol = FRESH_SNOW_DENSITY / ICE_DENSITY
         depolarisation_factors = get_depolarisation_factor(axial_ratio, shape)
         eff_h = get_effective_permittivity(fvol, depolarisation_factors[0])
         eff_y = get_effective_permittivity(fvol, depolarisation_factors[1])
@@ -529,42 +529,45 @@ def sensitivity_analysis(image_dict):
     """
 
     wrange = range(45, 66, 2)
-    fwindows = [(i, j) for i, j in zip(wrange, wrange)]
-    cwindows = [(3, 3), (5, 5), (7, 7), (9, 9), (11, 11)]
-    # fwindows = [(3, 3)]
-    # cwindows = [(3, 3)]
+    # fwindows = [(i, j) for i, j in zip(wrange, wrange)]
+    # cwindows = [(3, 3), (5, 5), (7, 7), (9, 9), (11, 11)]
+    fwindows = [(65, 65)]
+    cwindows = [(3, 3)]
     coh_threshold = [0]
+    axial_ratio = np.arange(1.1, 2.1, 0.1)
     apply_masks = True
     verbose = False
     wf = False
     lf = False
     lia_file = image_dict['LIA']
-    outfile = open('sensitivity_FSD_4.csv', 'a+')
-    outfile.write('CWindow CThreshold FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
+    outfile = open('sensitivity_FSD_Axial.csv', 'a+')
+    outfile.write('CWindow CThreshold Axial_Ratio FWindow Mean_FSD(cm) SD_FSD(cm) Mean_SWE(mm) SD_SWE(mm)\n')
     print('Computation started...')
     for wsize in cwindows:
         ws1, ws2 = int(wsize[0] / 2.), int(wsize[1] / 2.)
         wstr1 = '(' + str(wsize[0]) + ',' + str(wsize[1]) + ')'
         print('Computing CPD and Coherence...')
         cpd_arr, coh_arr = calc_cpd(image_dict, (ws1, ws2), apply_masks=apply_masks, verbose=verbose, wf=wf,
-                                    load_files=lf, from_coh=False, coh_type='E', comp_cpd=False)
-        # for ct in coh_threshold:
-        #         print('Calculating fresh snow depth ...')
-        #         fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
-        #                                 verbose=verbose, wf=wf, load_file=False, fsd_threshold=200, axial_ratio=1.5)
-        #         for fsize in fwindows:
-        #             fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
-        #             print('FSD Ensemble Averaging')
-        #             fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New_Test', verbose=verbose, wf=wf)
-        #             swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
-        #             vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
-        #             vr_str1 = ' '.join([str(r) for r in vr])
-        #             wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
-        #             vr = check_values(swe, lia_file, DHUNDI_COORDS)
-        #             vr_str2 = ' '.join([str(r) for r in vr])
-        #             final_str = wstr1 + ' ' + str(ct) + ' ' + wstr2 + ' ' + vr_str1 + ' ' + vr_str2 + '\n'
-        #             print(final_str)
-        #             outfile.write(final_str)
+                                    load_files=lf, from_coh=False, coh_type='E', comp_cpd=True)
+        for ct in coh_threshold:
+            for ax in axial_ratio:
+                print('Calculating fresh snow depth ...')
+                fsd_arr = cpd2freshsnow(cpd_arr, lia_file, coh_arr, ssd_file=image_dict['SSD'], coh_threshold=ct,
+                                        verbose=verbose, wf=wf, load_file=False, fsd_threshold=200, axial_ratio=ax)
+                for fsize in fwindows:
+                    fs1, fs2 = int(fsize[0] / 2.), int(fsize[1] / 2.)
+                    print('FSD Ensemble Averaging')
+                    fsd_avg = get_ensemble_avg(fsd_arr, (fs1, fs2), lia_file, 'FSD_New_Test', verbose=verbose, wf=wf)
+                    swe = get_fresh_swe(fsd_avg, FRESH_SNOW_DENSITY, img_file=lia_file)
+                    vr = check_values(fsd_avg, lia_file, DHUNDI_COORDS)
+                    vr_str1 = ' '.join([str(r) for r in vr])
+                    wstr2 = '(' + str(fsize[0]) + ',' + str(fsize[1]) + ')'
+                    vr = check_values(swe, lia_file, DHUNDI_COORDS)
+                    vr_str2 = ' '.join([str(r) for r in vr])
+                    final_str = wstr1 + ' ' + str(ct) + ' ' + str(ax) + ' ' + wstr2 + ' ' + vr_str1 + ' ' \
+                                + vr_str2 + '\n'
+                    print(final_str)
+                    outfile.write(final_str)
 
 
 image_dict = read_images('../../THESIS/Thesis_Files/Polinsar/Clipped_Tifs')
